@@ -7,6 +7,7 @@ import type {
   MatchRosterEntry,
   MatchSettings,
   SkillLoadoutEntry,
+  TeamColorSlot,
   TraitPoints,
 } from './types'
 
@@ -47,9 +48,10 @@ export function deriveMatchMode(roster: MatchRosterEntry[]): MatchMode {
   return 'ffa'
 }
 
-export function coerceFriendlyFire(roster: MatchRosterEntry[], requested: boolean): boolean {
+/** True when any team has 2+ fighters — skills and Strikes can hit allies. Ignored for rosters where every team is solo (duel, FFA). */
+export function coerceFriendlyFire(roster: MatchRosterEntry[]): boolean {
   if (!rosterHasMultiMemberTeam(roster)) return false
-  return requested
+  return true
 }
 
 /** True if any team number appears more than once (same as {@link rosterHasMultiMemberTeam} but for ids only). */
@@ -90,6 +92,19 @@ export interface CustomCpuBuildInput {
 }
 
 /**
+ * Palette slot for a roster team id: optional override, else `clamp(floor(teamId), 0, 7)`.
+ */
+export function resolveTeamColorSlotForTeamId(
+  teamId: number,
+  teamColorSlotByTeamId: Partial<Record<number, TeamColorSlot>> | undefined,
+): TeamColorSlot {
+  const override = teamColorSlotByTeamId?.[teamId]
+  if (override !== undefined) return override
+  const t = Math.min(7, Math.max(0, Math.floor(teamId)))
+  return t as TeamColorSlot
+}
+
+/**
  * Builds roster-based match settings for the custom setup flow (you in slot 0, CPUs after).
  */
 export function buildCustomMatchSettings(args: {
@@ -97,9 +112,9 @@ export function buildCustomMatchSettings(args: {
   humanTraits: TraitPoints
   cpuBuilds: CustomCpuBuildInput[]
   teamIds: number[]
-  friendlyFire: boolean
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty
+  teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
 }): MatchSettings {
   const { teamIds, cpuBuilds } = args
   const err = validateCustomTeamIds(teamIds)
@@ -140,16 +155,30 @@ export function buildCustomMatchSettings(args: {
   return validateRosterMatch({
     roster,
     humanActorId: humanId,
-    friendlyFire: coerceFriendlyFire(roster, args.friendlyFire),
+    friendlyFire: coerceFriendlyFire(roster),
     boardSize: args.boardSize,
     defaultCpuDifficulty: defDiff,
     perCpuDifficulty,
+    teamColorSlotByTeamId: args.teamColorSlotByTeamId,
   })
+}
+
+function validateTeamColorSlotMap(
+  teamColorSlotByTeamId: Partial<Record<number, TeamColorSlot>> | undefined,
+): void {
+  if (!teamColorSlotByTeamId) return
+  for (const v of Object.values(teamColorSlotByTeamId)) {
+    if (v === undefined) continue
+    if (!Number.isInteger(v) || v < 0 || v > 7) {
+      throw new Error('teamColorSlotByTeamId values must be integers 0–7')
+    }
+  }
 }
 
 function validateRosterMatch(ms: MatchSettings): MatchSettings {
   const { roster, humanActorId } = ms
   if (roster.length < 2 || roster.length > 4) throw new Error('Roster must have 2–4 fighters')
+  validateTeamColorSlotMap(ms.teamColorSlotByTeamId)
   const ids = new Set<string>()
   let humanCount = 0
   for (const r of roster) {
@@ -162,7 +191,7 @@ function validateRosterMatch(ms: MatchSettings): MatchSettings {
   if (!humanRow || humanRow.actorId !== humanActorId) throw new Error('humanActorId must match the isHuman row')
   return {
     ...ms,
-    friendlyFire: coerceFriendlyFire(roster, ms.friendlyFire),
+    friendlyFire: coerceFriendlyFire(roster),
   }
 }
 
@@ -216,7 +245,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
     return {
       roster,
       humanActorId: humanId,
-      friendlyFire: coerceFriendlyFire(roster, legacy.friendlyFire),
+      friendlyFire: coerceFriendlyFire(roster),
       boardSize: legacy.boardSize,
       defaultCpuDifficulty: defDiff,
       perCpuDifficulty: { [cpuId]: cpuDiffForLegacyKey('cpu') },
@@ -266,7 +295,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
     return {
       roster,
       humanActorId: humanId,
-      friendlyFire: coerceFriendlyFire(roster, legacy.friendlyFire),
+      friendlyFire: coerceFriendlyFire(roster),
       boardSize: legacy.boardSize,
       defaultCpuDifficulty: defDiff,
       perCpuDifficulty: {
@@ -320,7 +349,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
     return {
       roster,
       humanActorId: humanId,
-      friendlyFire: false,
+      friendlyFire: coerceFriendlyFire(roster),
       boardSize: legacy.boardSize,
       defaultCpuDifficulty: defDiff,
       perCpuDifficulty: {
@@ -373,7 +402,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
     return {
       roster,
       humanActorId: humanId,
-      friendlyFire: coerceFriendlyFire(roster, legacy.friendlyFire),
+      friendlyFire: coerceFriendlyFire(roster),
       boardSize: legacy.boardSize,
       defaultCpuDifficulty: defDiff,
       perCpuDifficulty: {

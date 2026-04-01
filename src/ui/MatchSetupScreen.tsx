@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
-import type { BattleConfig, CpuDifficulty } from '../game/types'
+import type { BattleConfig, CpuDifficulty, TeamColorSlot } from '../game/types'
 import {
   buildCustomMatchSettings,
-  teamIdsHaveMultiMemberTeam,
+  resolveTeamColorSlotForTeamId,
   validateCustomTeamIds,
 } from '../game/match-roster'
 import { CPU_THINK_TIMEOUT_MS } from '../ai/cpuThinkBudget'
 import { randomCpuBuild } from '../game/randomCpuBuild'
 import { GameGuide } from './help/GameGuide'
+import './board/holographic-board.css'
 import './loadout/loadout-surface.css'
+
+const TEAM_COLOR_SLOTS: TeamColorSlot[] = [0, 1, 2, 3, 4, 5, 6, 7]
 
 function defaultTeamIdsForCount(count: 2 | 3 | 4): number[] {
   if (count === 2) return [0, 1]
@@ -25,28 +28,24 @@ const MATCH_TEMPLATES = {
     hint: 'You vs one CPU',
     fighterCount: 2 as const,
     teamIds: [0, 1],
-    friendlyFire: false,
   },
   ffa: {
     chip: 'FFA',
     hint: 'Four fighters, everyone solo',
     fighterCount: 4 as const,
     teamIds: [0, 1, 2, 3],
-    friendlyFire: false,
   },
   '1v3': {
     chip: '1v3',
     hint: 'You vs three CPUs on one team',
     fighterCount: 4 as const,
     teamIds: [0, 1, 1, 1],
-    friendlyFire: false,
   },
   '2v2': {
     chip: '2v2',
     hint: 'Two vs two',
     fighterCount: 4 as const,
     teamIds: [0, 0, 1, 1],
-    friendlyFire: false,
   },
 } as const
 
@@ -68,10 +67,13 @@ export function MatchSetupScreen({
   onBack: () => void
 }) {
   const [difficulty, setDifficulty] = useState<CpuDifficulty>('normal')
-  const [friendlyFire, setFriendlyFire] = useState(false)
   const [boardOverride, setBoardOverride] = useState<string>('')
   const [fighterCount, setFighterCount] = useState<2 | 3 | 4>(2)
   const [teamIds, setTeamIds] = useState<number[]>(() => [...MATCH_TEMPLATES.duel.teamIds])
+  /** Per-team palette slot overrides; empty means default `clamp(teamId, 0, 7)`. */
+  const [teamColorSlotByTeamId, setTeamColorSlotByTeamId] = useState<
+    Partial<Record<number, TeamColorSlot>>
+  >({})
   /** Which template matches current fields; empty after manual edits. */
   const [activeTemplate, setActiveTemplate] = useState<TemplateId | ''>('duel')
 
@@ -85,13 +87,22 @@ export function MatchSetupScreen({
 
   const customTeamError = useMemo(() => validateCustomTeamIds(teamIds), [teamIds])
 
-  const showFriendlyFire = teamIdsHaveMultiMemberTeam(teamIds)
+  const distinctTeamIds = useMemo(() => Array.from(new Set(teamIds)).sort((a, b) => a - b), [teamIds])
+
+  /** Resolved palette slot per team (defaults + overrides), for exclusive picking. */
+  const resolvedColorByTeamId = useMemo(() => {
+    const rec: Partial<Record<number, TeamColorSlot>> = {}
+    for (const t of distinctTeamIds) {
+      rec[t] = resolveTeamColorSlotForTeamId(t, teamColorSlotByTeamId)
+    }
+    return rec
+  }, [distinctTeamIds, teamColorSlotByTeamId])
 
   function applyTemplate(id: TemplateId) {
     const t = MATCH_TEMPLATES[id]
     setFighterCount(t.fighterCount)
     setTeamIds([...t.teamIds])
-    setFriendlyFire(t.friendlyFire)
+    setTeamColorSlotByTeamId({})
     setActiveTemplate(id)
   }
 
@@ -108,14 +119,15 @@ export function MatchSetupScreen({
       const b = randomCpuBuild(level)
       cpuBuilds.push({ loadout: b.cpuLoadout, traits: b.cpuTraits })
     }
+    const colorKeys = Object.keys(teamColorSlotByTeamId)
     const match = buildCustomMatchSettings({
       humanLoadout: draft.playerLoadout,
       humanTraits: draft.playerTraits,
       cpuBuilds,
       teamIds,
-      friendlyFire,
       boardSize: boardSizeParsed,
       defaultCpuDifficulty: difficulty,
+      teamColorSlotByTeamId: colorKeys.length > 0 ? teamColorSlotByTeamId : undefined,
     })
     const first = cpuBuilds[0]!
     return {
@@ -147,8 +159,8 @@ export function MatchSetupScreen({
                   teams. CPUs get random loadouts when the battle starts.
                 </p>
                 <p className="ls-modal__note">
-                  Templates apply a preset layout; you can change fighter count or teams afterward. Friendly fire is
-                  available when a team has more than one fighter.
+                  Templates apply a preset layout; you can change fighter count or teams afterward. When any team has
+                  more than one fighter, friendly fire applies — skills and Strikes can hit allies.
                 </p>
                 <p className="ls-modal__note">
                   <strong>CPU difficulty</strong> applies to computer fighters. Non-Easy levels use lookahead search:
@@ -192,6 +204,7 @@ export function MatchSetupScreen({
               const c = Number(e.target.value) as 2 | 3 | 4
               setFighterCount(c)
               setTeamIds(defaultTeamIdsForCount(c))
+              setTeamColorSlotByTeamId({})
               markCustomized()
             }}
             aria-label="Number of fighters"
@@ -243,6 +256,61 @@ export function MatchSetupScreen({
           ) : null}
         </div>
 
+        <div className="ls-field ls-field--team-colors" aria-label="Team colors">
+          <span>Team colors</span>
+          <p className="ls-custom-hint">
+            Palette for board tokens and the battle HUD. Defaults match team number. Each color can only be assigned to
+            one team.
+          </p>
+          {distinctTeamIds.map((tid) => {
+            const label = TEAM_LABELS[tid] ?? String(tid)
+            return (
+              <div key={tid} className="ls-team-color-row">
+                <span className="ls-team-color-label">
+                  Team {label} ({tid})
+                </span>
+                <div
+                  className="ls-team-color-swatches"
+                  role="radiogroup"
+                  aria-label={`Color for team ${tid}`}
+                >
+                  {TEAM_COLOR_SLOTS.map((slot) => {
+                    const selected = resolvedColorByTeamId[tid] === slot
+                    const takenByOther = distinctTeamIds.some(
+                      (oth) => oth !== tid && resolvedColorByTeamId[oth] === slot,
+                    )
+                    const disabled = takenByOther && !selected
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        className={`ls-team-swatch${selected ? ' is-selected' : ''}`}
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={disabled}
+                        title={
+                          disabled
+                            ? `Color taken by another team (slot ${slot})`
+                            : `Color slot ${slot}`
+                        }
+                        onClick={() => {
+                          setTeamColorSlotByTeamId((prev) => ({ ...prev, [tid]: slot }))
+                          markCustomized()
+                        }}
+                      >
+                        <span
+                          className={`holo-piece holo-piece--t${slot} ls-team-swatch__disc`}
+                          aria-hidden
+                        />
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
         <label className="ls-field">
           <span>CPU difficulty</span>
           <select
@@ -264,19 +332,6 @@ export function MatchSetupScreen({
             {CPU_THINK_TIMEOUT_MS / 1000} seconds per CPU turn (search is capped there; after that, the CPU falls back to
             a quick move).
           </p>
-        ) : null}
-
-        {showFriendlyFire ? (
-          <label className="ls-field ls-field--inline">
-            <span>
-              <input
-                type="checkbox"
-                checked={friendlyFire}
-                onChange={(e) => setFriendlyFire(e.target.checked)}
-              />
-              Friendly fire — teammates can hurt teammates
-            </span>
-          </label>
         ) : null}
 
         <label className="ls-field">

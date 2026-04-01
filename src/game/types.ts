@@ -123,6 +123,9 @@ export type MatchMode = 'teams' | 'ffa'
 
 export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
+/** Visual palette slot for board tokens and UI (maps to CSS `t0`–`t7`). */
+export type TeamColorSlot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+
 /** One battle log line; `subject` selects team tint in the UI (omit for neutral flavor text). */
 export interface BattleLogEntry {
   text: string
@@ -215,11 +218,17 @@ export interface MatchSettings {
   roster: MatchRosterEntry[]
   /** Must equal the `actorId` of the unique `isHuman` row. */
   humanActorId: ActorId
+  /** True when any team has 2+ fighters — allies can be hit by skills/Strikes. Set from the roster in `match-roster` (`coerceFriendlyFire`). */
   friendlyFire: boolean
   /** If set, clamped 7–15; else computed from level + actor count. */
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty
   perCpuDifficulty?: Partial<Record<ActorId, CpuDifficulty>>
+  /**
+   * Optional: map roster `teamId` → palette slot for board/side panel/log.
+   * Defaults to `clamp(teamId, 0, 7)` when absent or for a team with no entry.
+   */
+  teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
 }
 
 /**
@@ -227,6 +236,7 @@ export interface MatchSettings {
  */
 export interface LegacyMatchSettings {
   mode: MatchMode
+  /** Ignored when building match settings — friendly fire is derived from the roster. */
   friendlyFire: boolean
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty

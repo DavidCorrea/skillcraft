@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import type { ActorId, Coord } from '../../game/types'
+import type { ActorId, Coord, TeamColorSlot } from '../../game/types'
 import { coordKey } from '../../game/board'
 import { cellCenterNormalized, pathLinesD } from './geometry'
 import type { BoardFxState } from './fx'
@@ -8,15 +8,14 @@ import './holographic-board.css'
 /** Gap as a fraction of the inner grid width; tuned to match `.holo-board` gap + padding. */
 const GRID_GAP_FRACTION = 0.038
 
-/** Visual team slot 0–7 (from `teamByActor`; teammates share a slot). */
-export type TeamColorSlot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
-
 export type BoardPiece = {
   id: ActorId
   pos: Coord
   /** Shared by everyone on the same team. */
   teamSlot: TeamColorSlot
   extraClass: string
+  /** Renders `.holo-piece-you-dot` when human and an ally shares the same team color. */
+  youMarker?: boolean
 }
 
 export interface HolographicBattleBoardProps {
@@ -62,12 +61,14 @@ function MoveOverlayPiece({
   from,
   to,
   extraClass,
+  youMarker,
   size,
 }: {
   teamSlot: TeamColorSlot
   from: Coord
   to: Coord
   extraClass: string
+  youMarker?: boolean
   size: number
 }) {
   const [pos, setPos] = useState(from)
@@ -93,6 +94,7 @@ function MoveOverlayPiece({
       }}
     >
       <span className="holo-piece-ring" />
+      {youMarker ? <span className="holo-piece-you-dot" aria-hidden /> : null}
     </span>
   )
 }
@@ -171,6 +173,7 @@ export function HolographicBattleBoard({
               to={boardFx.to}
               size={size}
               extraClass={pieces.find((x) => x.id === boardFx.actor)?.extraClass ?? ''}
+              youMarker={pieces.find((x) => x.id === boardFx.actor)?.youMarker}
             />
           </div>
         ) : null}
@@ -254,6 +257,7 @@ export function HolographicBattleBoard({
                     }
                   >
                     {!overlap || here.indexOf(p) === here.length - 1 ? <span className="holo-piece-ring" /> : null}
+                    {p.youMarker ? <span className="holo-piece-you-dot" aria-hidden /> : null}
                   </span>
                 )
               })}

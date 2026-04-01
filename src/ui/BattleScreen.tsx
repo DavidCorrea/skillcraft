@@ -11,12 +11,13 @@ import {
   legalCasts,
   legalMoves,
   legalStrikeTargets,
+  normalizeBattleConfig,
 } from '../game/engine'
 import type { GameAction } from '../game/engine'
 import { createCpuWorker, requestCpuPick } from '../ai/requestCpuPick'
 import { effectiveCastRangeForLoadout, entryPointCost, getSkillDef, manaCostCastRange } from '../game/skills'
 import { STAMINA_REGEN_PER_TURN } from '../game/traits'
-import { HolographicBattleBoard, type BoardPiece, type TeamColorSlot } from './board'
+import { HolographicBattleBoard, type BoardPiece } from './board'
 import {
   castResolveStaggerMap,
   knockbackMoveFx,
@@ -28,6 +29,7 @@ import { ActorInspectModal } from './battle/ActorInspectModal'
 import { pickCpuThinkingPhrase } from './battle/cpu-thinking'
 import { battleActorLabel, describeBattleCellTooltip } from './battle/cell-tooltip'
 import { GameGuide } from './help/GameGuide'
+import { resolveTeamColorSlotForTeamId } from '../game/match-roster'
 import './battle/battle-surface.css'
 
 type Mode = 'idle' | 'move' | 'cast' | 'strikePick'
@@ -74,13 +76,6 @@ function BsMeter({
   )
 }
 
-function teamColorSlot(game: GameState, id: ActorId): TeamColorSlot {
-  const tid = game.teamByActor[id]
-  const n = tid === undefined ? 0 : tid
-  const t = Math.min(7, Math.max(0, Math.floor(n)))
-  return t as TeamColorSlot
-}
-
 export function BattleScreen({
   config,
   onExit,
@@ -99,6 +94,8 @@ export function BattleScreen({
   const [hiddenPieceActor, setHiddenPieceActor] = useState<ActorId | null>(null)
   const [sceneCastElement, setSceneCastElement] = useState<string | null>(null)
   const [inspectActorId, setInspectActorId] = useState<ActorId | null>(null)
+
+  const normalizedMatch = useMemo(() => normalizeBattleConfig(config).match, [config])
 
   const gameRef = useRef(game)
   const battleLogRef = useRef<HTMLDivElement>(null)
@@ -341,16 +338,35 @@ export function BattleScreen({
     )
   }, [mode, game])
 
+  /** Another living fighter shares your team — same board color as an ally; mark your token and row */
+  const humanSharesTeamColor = useMemo(() => {
+    const t = game.teamByActor[game.humanActorId]
+    if (t === undefined) return false
+    let n = 0
+    for (const id of game.turnOrder) {
+      const a = game.actors[id]
+      if (!a || a.hp <= 0) continue
+      if (game.teamByActor[id] === t) n += 1
+    }
+    return n >= 2
+  }, [game])
+
   const boardPieces: BoardPiece[] = useMemo(() => {
+    const colorMap = normalizedMatch.teamColorSlotByTeamId
     return game.turnOrder
       .filter((id) => game.actors[id]!.hp > 0)
-      .map((id) => ({
-        id,
-        pos: game.actors[id]!.pos,
-        teamSlot: teamColorSlot(game, id),
-        extraClass: statusPieceClasses(game.actors[id]!.statuses),
-      }))
-  }, [game])
+      .map((id) => {
+        const tid = game.teamByActor[id]
+        const n = tid === undefined ? 0 : tid
+        return {
+          id,
+          pos: game.actors[id]!.pos,
+          teamSlot: resolveTeamColorSlotForTeamId(n, colorMap),
+          extraClass: statusPieceClasses(game.actors[id]!.statuses),
+          youMarker: id === game.humanActorId && humanSharesTeamColor,
+        }
+      })
+  }, [game, humanSharesTeamColor, normalizedMatch.teamColorSlotByTeamId])
 
   const pPos = game.actors[game.humanActorId]!.pos
 
@@ -579,7 +595,7 @@ export function BattleScreen({
                   key={id}
                   role="button"
                   tabIndex={0}
-                  className={`bs-actor bs-actor--t${teamColorSlot(game, id)}${you ? ' bs-actor--you' : ''}${!game.winner && game.turn === id ? ' is-active' : ''}`}
+                  className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${!game.winner && game.turn === id ? ' is-active' : ''}`}
                   aria-label={`Inspect ${label}`}
                   onClick={() => setInspectActorId(id)}
                   onKeyDown={(e) => {
@@ -612,7 +628,7 @@ export function BattleScreen({
                 key={i}
                 className={
                   entry.subject !== undefined
-                    ? `battle-log__row battle-log__row--t${teamColorSlot(game, entry.subject)}`
+                    ? `battle-log__row battle-log__row--t${resolveTeamColorSlotForTeamId(game.teamByActor[entry.subject] ?? 0, normalizedMatch.teamColorSlotByTeamId)}`
                     : 'battle-log__row battle-log__row--neutral'
                 }
               >
