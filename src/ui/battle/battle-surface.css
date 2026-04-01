@@ -1,0 +1,482 @@
+/**
+ * Battle surface — design tokens + layout only (Destiny-adjacent: quiet, edge-integrated HUD).
+ * Avoids card stacks, glass panels, and floating chrome; board owns the viewport center.
+ */
+
+.battle-surface {
+  /* Strict token set (2 accents: signal + target-read) */
+  --bs-bg: #050608;
+  --bs-void: #080a0d;
+  --bs-line: rgba(226, 232, 240, 0.12);
+  --bs-line-strong: rgba(226, 232, 240, 0.22);
+  --bs-text: #e0e4ea;
+  --bs-muted: rgba(148, 163, 184, 0.85);
+  --bs-accent: #6eb8c8;
+  --bs-accent-dim: rgba(110, 184, 200, 0.14);
+  --bs-foe: #b87a72;
+  --bs-foe-dim: rgba(184, 122, 114, 0.12);
+  --bs-target: #c9a227;
+  --bs-err: #d9786a;
+
+  --bs-font: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --bs-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --bs-track: 0.14em;
+
+  box-sizing: border-box;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bs-bg);
+  color: var(--bs-text);
+  font-family: var(--bs-font);
+  letter-spacing: var(--bs-track);
+}
+
+.battle-surface *,
+.battle-surface *::before,
+.battle-surface *::after {
+  box-sizing: border-box;
+}
+
+/* Top rail: integrated strip, not a floating bar */
+.battle-surface__rail {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--bs-line);
+  background: linear-gradient(180deg, var(--bs-void) 0%, var(--bs-bg) 100%);
+}
+
+.battle-surface__exit {
+  margin: 0;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--bs-muted);
+  font-family: var(--bs-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.battle-surface__exit:hover {
+  color: var(--bs-accent);
+}
+
+.battle-surface__exit:focus-visible {
+  outline: 1px solid var(--bs-accent);
+  outline-offset: 2px;
+}
+
+.battle-surface__title {
+  margin: 0;
+  justify-self: center;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--bs-muted);
+}
+
+.battle-surface__title.is-live {
+  color: var(--bs-accent);
+}
+
+.battle-surface__title.is-foe {
+  color: var(--bs-foe);
+}
+
+.battle-surface__title.is-end {
+  color: var(--bs-text);
+  letter-spacing: 0.2em;
+}
+
+.battle-surface__help {
+  min-width: 0;
+}
+
+/* Main matrix: edge HUD + board (board ~72% implied by flex ratios) */
+.battle-surface__matrix {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 11vw) minmax(0, 1fr) minmax(8rem, 13vw);
+  gap: 0;
+}
+
+.battle-surface__edge {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.45rem;
+  border-right: 1px solid var(--bs-line);
+  background: var(--bs-bg);
+}
+
+.battle-surface__edge--right {
+  border-right: none;
+  border-left: 1px solid var(--bs-line);
+  padding-left: 0.5rem;
+}
+
+.battle-surface__board {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.5rem;
+}
+
+/* Actor column — lines only, no cards */
+.bs-actor {
+  margin-bottom: 0.85rem;
+}
+
+.bs-actor[role='button'] {
+  cursor: pointer;
+  width: 100%;
+}
+
+.bs-actor[role='button']:focus-visible {
+  outline: 2px solid var(--actor-accent, var(--bs-accent));
+  outline-offset: 3px;
+}
+
+.bs-actor[role='button']:hover {
+  opacity: 0.94;
+}
+
+.bs-actor:last-child {
+  margin-bottom: 0;
+}
+
+.bs-actor__label {
+  display: block;
+  font-family: var(--bs-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--actor-accent, var(--bs-muted));
+  margin-bottom: 0.35rem;
+}
+
+/* Team tint — matches board `holo-piece--t*` (from `teamByActor`). */
+.bs-actor--t0 {
+  --actor-accent: #6eb8c8;
+  --actor-accent-dim: rgba(110, 184, 200, 0.2);
+}
+
+.bs-actor--t1 {
+  --actor-accent: #c97a72;
+  --actor-accent-dim: rgba(201, 122, 114, 0.2);
+}
+
+.bs-actor--t2 {
+  --actor-accent: #7ab894;
+  --actor-accent-dim: rgba(122, 184, 148, 0.2);
+}
+
+.bs-actor--t3 {
+  --actor-accent: #d4b060;
+  --actor-accent-dim: rgba(212, 176, 96, 0.2);
+}
+
+.bs-actor--t4 {
+  --actor-accent: #b8a0e8;
+  --actor-accent-dim: rgba(184, 160, 232, 0.2);
+}
+
+.bs-actor--t5 {
+  --actor-accent: #e8a868;
+  --actor-accent-dim: rgba(232, 168, 104, 0.2);
+}
+
+.bs-actor--t6 {
+  --actor-accent: #e890b8;
+  --actor-accent-dim: rgba(232, 144, 184, 0.2);
+}
+
+.bs-actor--t7 {
+  --actor-accent: #b8e860;
+  --actor-accent-dim: rgba(184, 232, 96, 0.2);
+}
+
+.battle-surface__combatants {
+  flex-shrink: 0;
+}
+
+.battle-log {
+  flex: 1;
+  min-height: 0;
+  margin-top: 0.35rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--bs-line);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.battle-log__row {
+  margin: 0 0 0.26rem;
+  font-family: var(--bs-mono);
+  font-size: 0.42rem;
+  line-height: 1.38;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding-left: 0.28rem;
+  border-left: 2px solid transparent;
+}
+
+.battle-log__row:last-child {
+  margin-bottom: 0;
+}
+
+.battle-log__row--neutral {
+  color: var(--bs-muted);
+  border-left-color: rgba(148, 163, 184, 0.35);
+}
+
+.battle-log__row--t0 {
+  color: #6eb8c8;
+  border-left-color: #6eb8c8;
+}
+
+.battle-log__row--t1 {
+  color: #c97a72;
+  border-left-color: #c97a72;
+}
+
+.battle-log__row--t2 {
+  color: #7ab894;
+  border-left-color: #7ab894;
+}
+
+.battle-log__row--t3 {
+  color: #d4b060;
+  border-left-color: #d4b060;
+}
+
+.battle-log__row--t4 {
+  color: #b8a0e8;
+  border-left-color: #b8a0e8;
+}
+
+.battle-log__row--t5 {
+  color: #e8a868;
+  border-left-color: #e8a868;
+}
+
+.battle-log__row--t6 {
+  color: #e890b8;
+  border-left-color: #e890b8;
+}
+
+.battle-log__row--t7 {
+  color: #b8e860;
+  border-left-color: #b8e860;
+}
+
+.bs-actor--you .bs-actor__label {
+  text-shadow: 0 0 10px var(--actor-accent-dim);
+}
+
+.bs-actor.is-active .bs-actor__label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: currentColor;
+}
+
+.bs-meter {
+  display: grid;
+  grid-template-columns: 1.15rem 1fr auto;
+  align-items: center;
+  gap: 0.25rem 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.bs-meter:first-of-type {
+  margin-top: 0;
+}
+
+.bs-meter__k {
+  font-family: var(--bs-mono);
+  font-size: 0.58rem;
+  color: var(--bs-muted);
+}
+
+.bs-meter__track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.bs-meter__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--actor-accent, var(--bs-accent));
+  opacity: 0.85;
+  transition: width 0.2s ease;
+}
+
+.bs-meter--mp .bs-meter__fill {
+  opacity: 0.65;
+}
+
+.bs-meter--stamina .bs-meter__fill {
+  background: #8b9a6e;
+  opacity: 0.75;
+}
+
+.bs-meter__v {
+  font-family: var(--bs-mono);
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--bs-muted);
+  letter-spacing: 0.04em;
+}
+
+.bs-actor__meta {
+  margin: 0.4rem 0 0;
+  font-family: var(--bs-mono);
+  font-size: 0.55rem;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  color: var(--bs-muted);
+}
+
+/* Action stack — flat, sharp, no pill chrome */
+.bs-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-height: 0;
+}
+
+.bs-actions__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.bs-actions__label {
+  font-family: var(--bs-mono);
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bs-muted);
+  margin-bottom: 0.1rem;
+}
+
+.bs-btn {
+  appearance: none;
+  margin: 0;
+  padding: 0.32rem 0.4rem;
+  border: 1px solid var(--bs-line);
+  border-radius: 1px;
+  background: transparent;
+  color: var(--bs-text);
+  font-family: var(--bs-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.bs-btn:hover:not(:disabled) {
+  border-color: var(--bs-line-strong);
+  background: var(--bs-accent-dim);
+}
+
+.bs-btn:focus-visible {
+  outline: 1px solid var(--bs-accent);
+  outline-offset: 1px;
+}
+
+.bs-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.bs-btn.is-on {
+  border-color: rgba(110, 184, 200, 0.55);
+  color: var(--bs-accent);
+  background: rgba(110, 184, 200, 0.06);
+}
+
+.bs-btn.is-armed {
+  border-left: 2px solid var(--bs-target);
+  padding-left: calc(0.4rem - 1px);
+}
+
+.bs-btn--quiet {
+  opacity: 0.55;
+}
+
+.bs-btn--quiet:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+/* Bottom status — one line, ellipsis */
+.battle-surface__status {
+  flex-shrink: 0;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.65rem;
+  border-top: 1px solid var(--bs-line);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+}
+
+.battle-surface__hint {
+  margin: 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--bs-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.battle-surface__hint.is-error {
+  color: var(--bs-err);
+}
+
+.battle-surface__last {
+  margin: 0;
+  font-family: var(--bs-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+  .battle-surface__matrix {
+    grid-template-columns: minmax(6rem, 18vw) minmax(0, 1fr) minmax(6.5rem, 22vw);
+  }
+
+  .bs-btn {
+    font-size: 0.58rem;
+    padding: 0.28rem 0.3rem;
+  }
+}

@@ -1,0 +1,248 @@
+/**
+ * Shared Rules + Status Effects modals (loadout, match setup, battle).
+ * Self-contained tokens so battle does not depend on loadout CSS variables.
+ */
+
+.help-ref-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.loadout-surface .ls-top .help-ref-row {
+  justify-self: end;
+}
+
+.battle-surface__help {
+  justify-self: end;
+}
+
+.help-ref-btn {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.82);
+  user-select: none;
+  transition: color 0.12s ease;
+}
+
+.help-ref-btn:hover {
+  color: #6eb8c8;
+}
+
+.help-ref-btn:focus-visible {
+  outline: 1px solid #6eb8c8;
+  outline-offset: 2px;
+}
+
+.ls-modal {
+  margin: auto;
+  padding: 0;
+  max-width: min(36rem, 94vw);
+  max-height: min(90dvh, 40rem);
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  background: #080a0d;
+  color: #e0e4ea;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.ls-modal::backdrop {
+  background: rgba(5, 6, 8, 0.72);
+}
+
+.ls-modal__panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(90dvh, 40rem);
+}
+
+.ls-modal__head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.1);
+}
+
+.ls-modal__title {
+  margin: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6eb8c8;
+}
+
+.ls-modal__close {
+  margin: 0;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 2px;
+  background: #050608;
+  color: rgba(148, 163, 184, 0.82);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ls-modal__close:hover {
+  color: #6eb8c8;
+  border-color: rgba(110, 184, 200, 0.35);
+}
+
+.ls-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.65rem 0.65rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+}
+
+.ls-modal__section {
+  margin-bottom: 1rem;
+}
+
+.ls-modal__section:last-child {
+  margin-bottom: 0;
+}
+
+.ls-modal__h {
+  margin: 0 0 0.4rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.82);
+}
+
+.ls-modal__trait-zone {
+  margin-top: 0.65rem;
+}
+
+.ls-modal__trait-zone:first-of-type {
+  margin-top: 0.35rem;
+}
+
+.ls-modal__subh {
+  margin: 0 0 0.35rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.54rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.ls-modal__note {
+  margin: 0 0 0.5rem;
+  color: rgba(148, 163, 184, 0.82);
+  font-size: 0.68rem;
+}
+
+.ls-modal__note:last-child {
+  margin-bottom: 0;
+}
+
+.ls-modal__note--tight {
+  margin-bottom: 0;
+}
+
+/* Inline label inside a guide paragraph (e.g. "Goal & turn.") */
+.ls-modal__lead {
+  display: inline-block;
+  margin-right: 0.35rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.65);
+}
+
+.ls-modal__context .ls-modal__note:first-child {
+  margin-top: 0;
+}
+
+.ls-modal__guide-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: rgba(148, 163, 184, 0.82);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.ls-modal__guide-list li {
+  margin-bottom: 0.5rem;
+}
+
+.ls-modal__guide-list li:last-child {
+  margin-bottom: 0;
+}
+
+.ls-modal__guide-list strong {
+  color: #e0e4ea;
+  font-weight: 600;
+}
+
+.ls-modal__status-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ls-modal__status-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 7rem) 1fr;
+  gap: 0.5rem 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.06);
+}
+
+.ls-modal__tag {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.62rem;
+  color: #c9a227;
+}
+
+.ls-modal__desc {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+.ls-modal__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.65rem;
+}
+
+.ls-modal__table th,
+.ls-modal__table td {
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.08);
+}
+
+.ls-modal__table th {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.82);
+}
+
+.ls-modal__table td:first-child {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: #e0e4ea;
+  white-space: nowrap;
+}

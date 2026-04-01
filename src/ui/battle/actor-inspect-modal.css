@@ -1,0 +1,329 @@
+/**
+ * Battle actor inspect — layout + pattern grid (uses ls-modal base from reference-modals.css).
+ */
+
+dialog.actor-inspect {
+  max-width: min(44rem, 96vw);
+}
+
+.actor-inspect .ls-modal__title {
+  letter-spacing: 0.12em;
+}
+
+.actor-inspect__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem 0.65rem;
+  margin-bottom: 0.5rem;
+}
+
+.actor-inspect__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.45rem;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 3px;
+  background: rgba(5, 6, 8, 0.65);
+}
+
+.actor-inspect__stat-k {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.actor-inspect__stat-v {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: #e0e4ea;
+}
+
+.actor-inspect__meta-line {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.actor-inspect__trait-block {
+  margin-top: 0.55rem;
+}
+
+.actor-inspect__trait-block:first-child {
+  margin-top: 0.25rem;
+}
+
+.actor-inspect__trait-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.62rem;
+}
+
+.actor-inspect__trait-table th,
+.actor-inspect__trait-table td {
+  padding: 0.28rem 0.35rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.06);
+  vertical-align: top;
+}
+
+.actor-inspect__trait-table th {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.55);
+}
+
+.actor-inspect__trait-table td:first-child {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: #e0e4ea;
+}
+
+.actor-inspect__trait-table td.actor-inspect__trait-val {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 2.25rem;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.actor-inspect__trait-table tr.actor-inspect__trait-row--zero td {
+  color: rgba(148, 163, 184, 0.38);
+}
+
+.actor-inspect__skills {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.actor-inspect__skill {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.5rem 0.55rem;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 4px;
+  background: rgba(5, 6, 8, 0.5);
+}
+
+.actor-inspect__skill-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.actor-inspect__skill-name {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e0e4ea;
+}
+
+.actor-inspect__skill-elem {
+  flex-shrink: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.35rem;
+  border-radius: 2px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+}
+
+.actor-inspect__skill-elem--fire {
+  color: #e8a070;
+  border-color: rgba(232, 160, 112, 0.35);
+  background: rgba(232, 160, 112, 0.08);
+}
+
+.actor-inspect__skill-elem--ice {
+  color: #8ec8e8;
+  border-color: rgba(142, 200, 232, 0.35);
+  background: rgba(142, 200, 232, 0.08);
+}
+
+.actor-inspect__skill-elem--water {
+  color: #70b8d8;
+  border-color: rgba(112, 184, 216, 0.35);
+  background: rgba(112, 184, 216, 0.08);
+}
+
+.actor-inspect__skill-elem--electric {
+  color: #d8c878;
+  border-color: rgba(216, 200, 120, 0.35);
+  background: rgba(216, 200, 120, 0.08);
+}
+
+.actor-inspect__skill-elem--poison {
+  color: #98d898;
+  border-color: rgba(152, 216, 152, 0.35);
+  background: rgba(152, 216, 152, 0.08);
+}
+
+.actor-inspect__skill-elem--wind {
+  color: #b8c8d8;
+  border-color: rgba(184, 200, 216, 0.35);
+  background: rgba(184, 200, 216, 0.08);
+}
+
+.actor-inspect__skill-elem--earth {
+  color: #c8a878;
+  border-color: rgba(200, 168, 120, 0.35);
+  background: rgba(200, 168, 120, 0.08);
+}
+
+.actor-inspect__skill-elem--arcane {
+  color: #c8a8e8;
+  border-color: rgba(200, 168, 232, 0.35);
+  background: rgba(200, 168, 232, 0.08);
+}
+
+.actor-inspect__skill-elem--physical {
+  color: #c8b8a8;
+  border-color: rgba(200, 184, 168, 0.35);
+  background: rgba(200, 184, 168, 0.08);
+}
+
+.actor-inspect__skill-body {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.actor-inspect__pattern-wrap {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.actor-inspect__pattern-caption {
+  margin: 0 0 0.25rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.55);
+}
+
+.actor-inspect__pattern {
+  display: grid;
+  gap: 3px;
+  padding: 5px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.actor-inspect__pattern-cell {
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 1rem;
+  max-width: 1.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  border-radius: 2px;
+  border: 1px solid rgba(226, 232, 240, 0.06);
+  color: rgba(224, 228, 234, 0.35);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.actor-inspect__pattern-cell--anchor {
+  border-width: 2px;
+  border-color: #6eb8c8;
+  background: rgba(110, 184, 200, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(110, 184, 200, 0.35),
+    0 0 14px rgba(110, 184, 200, 0.35);
+}
+
+/* Empty anchor: explicit + (see TSX) */
+.actor-inspect__pattern-cell--anchor:not(.actor-inspect__pattern-cell--hit) {
+  color: #6eb8c8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.actor-inspect__pattern-cell--hit {
+  color: #e0e4ea;
+  background: rgba(110, 184, 200, 0.18);
+  border-width: 1px;
+  border-color: rgba(110, 184, 200, 0.35);
+  box-shadow: none;
+}
+
+.actor-inspect__pattern-cell--hit.actor-inspect__pattern-cell--anchor {
+  color: #f0f8fa;
+  background: rgba(110, 184, 200, 0.32);
+  border-width: 2px;
+  border-color: #8ec8d4;
+  box-shadow:
+    0 0 0 1px rgba(110, 184, 200, 0.45),
+    0 0 16px rgba(110, 184, 200, 0.4);
+}
+
+.actor-inspect__pattern-cell--multi {
+  font-size: 0.52rem;
+  font-weight: 600;
+}
+
+.actor-inspect__skill-meta {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.65rem;
+  font-size: 0.62rem;
+  line-height: 1.4;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.actor-inspect__skill-meta dt {
+  margin: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.55);
+}
+
+.actor-inspect__skill-meta dd {
+  margin: 0;
+  color: #e0e4ea;
+}
+
+.actor-inspect__status-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actor-inspect__status-list li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.06);
+  font-size: 0.65rem;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.actor-inspect__status-list li:last-child {
+  border-bottom: none;
+}

@@ -1,0 +1,96 @@
+:root {
+  --bg-deep: #040508;
+  --bg-base: #070a0f;
+  --bg-panel: #0c1018;
+  --bg-elevated: #121a24;
+  --border: #1a2535;
+  --border-strong: #2a3f5c;
+  --cyan: #22d3ee;
+  --cyan-dim: rgba(34, 211, 238, 0.12);
+  --electric: #38bdf8;
+  --violet: #8b5cf6;
+  --violet-dim: rgba(139, 92, 246, 0.14);
+  --gold: #e7c35f;
+  --gold-dim: rgba(231, 195, 95, 0.12);
+  --magenta: #e879f9;
+  --amber: #fbbf24;
+  --text: #e8edf4;
+  --text-muted: #8b9aaf;
+  --font-display: 'Orbitron', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-body: system-ui, 'Segoe UI', sans-serif;
+  --grid-line: rgba(34, 211, 238, 0.06);
+  --radius-sharp: 2px;
+  --radius-panel: 0;
+  --shadow-glow: 0 0 40px rgba(34, 211, 238, 0.08);
+
+  font-family: var(--font-body);
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-deep);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  min-height: 100svh;
+  background-color: var(--bg-deep);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    radial-gradient(ellipse 120% 80% at 50% -20%, rgba(34, 211, 238, 0.07), transparent 55%),
+    radial-gradient(ellipse 80% 50% at 100% 50%, rgba(232, 121, 249, 0.04), transparent 45%);
+  background-size:
+    24px 24px,
+    24px 24px,
+    100% 100%,
+    100% 100%;
+  background-attachment: fixed;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+  min-height: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.app-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  z-index: 1;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}

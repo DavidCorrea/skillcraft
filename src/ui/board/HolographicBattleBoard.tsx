@@ -1,0 +1,266 @@
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import type { ActorId, Coord } from '../../game/types'
+import { coordKey } from '../../game/board'
+import { cellCenterNormalized, pathLinesD } from './geometry'
+import type { BoardFxState } from './fx'
+import './holographic-board.css'
+
+/** Gap as a fraction of the inner grid width; tuned to match `.holo-board` gap + padding. */
+const GRID_GAP_FRACTION = 0.038
+
+/** Visual team slot 0–7 (from `teamByActor`; teammates share a slot). */
+export type TeamColorSlot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+export type BoardPiece = {
+  id: ActorId
+  pos: Coord
+  /** Shared by everyone on the same team. */
+  teamSlot: TeamColorSlot
+  extraClass: string
+}
+
+export interface HolographicBattleBoardProps {
+  /** Grid dimension (7–15). */
+  size: number
+  cells: Coord[]
+  getCellClassSuffix: (c: Coord) => string
+  onCellClick: (c: Coord) => void
+  hoveredKey: string | null
+  onHoverChange: (key: string | null) => void
+  pulseKey: string | null
+  pathFrom: Coord | null
+  pathTos: Coord[]
+  pieces: BoardPiece[]
+  /** Hide in-cell token while overlay animates this actor's move. */
+  hiddenPieceActor: ActorId | null
+  boardFx: BoardFxState | null
+  /** Cast mode: pattern preview while hovering a reachable anchor. */
+  previewPatternKeys: Set<string> | null
+  /** `data-cast-element` on scene during offensive cast resolve. */
+  sceneCastElement: string | null
+  /** Hover/focus tooltip when cell has actors and/or a lingering hazard. */
+  getCellTooltip: (c: Coord) => string | null
+}
+
+function lungeDelta(attacker: Coord, defender: Coord): { lx: number; ly: number } {
+  const dx = Math.sign(defender.x - attacker.x)
+  const dy = Math.sign(defender.y - attacker.y)
+  return { lx: dx || 0, ly: dy || 0 }
+}
+
+function clampTeamSlot(n: number): TeamColorSlot {
+  const t = Math.min(7, Math.max(0, Math.floor(n)))
+  return t as TeamColorSlot
+}
+
+function pieceBaseClass(teamSlot: TeamColorSlot): string {
+  return `holo-piece holo-piece--t${teamSlot}`
+}
+
+function MoveOverlayPiece({
+  teamSlot,
+  from,
+  to,
+  extraClass,
+  size,
+}: {
+  teamSlot: TeamColorSlot
+  from: Coord
+  to: Coord
+  extraClass: string
+  size: number
+}) {
+  const [pos, setPos] = useState(from)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setPos(to))
+    return () => cancelAnimationFrame(id)
+  }, [from, to])
+
+  const p = cellCenterNormalized(pos, size, GRID_GAP_FRACTION)
+  const base = pieceBaseClass(teamSlot)
+  return (
+    <span
+      className={`${base} holo-piece--overlay ${extraClass}`}
+      style={{
+        position: 'absolute',
+        left: `${p.nx * 100}%`,
+        top: `${p.ny * 100}%`,
+        transform: 'translate(-50%, -50%)',
+        transition:
+          'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.28s cubic-bezier(0.22, 1, 0.36, 1)',
+        zIndex: 8,
+        ['--holo-grid-size' as string]: size,
+      }}
+    >
+      <span className="holo-piece-ring" />
+    </span>
+  )
+}
+
+export function HolographicBattleBoard({
+  size,
+  cells,
+  getCellClassSuffix,
+  onCellClick,
+  hoveredKey,
+  onHoverChange,
+  pulseKey,
+  pathFrom,
+  pathTos,
+  pieces,
+  hiddenPieceActor,
+  boardFx,
+  previewPatternKeys,
+  sceneCastElement,
+  getCellTooltip,
+}: HolographicBattleBoardProps) {
+  const pathD = useMemo(
+    () =>
+      pathFrom && pathTos.length > 0
+        ? pathLinesD(pathFrom, pathTos, size, GRID_GAP_FRACTION)
+        : '',
+    [pathFrom, pathTos, size],
+  )
+
+  const centerKey = coordKey({ x: Math.floor(size / 2), y: Math.floor(size / 2) })
+
+  const posById = useMemo(() => {
+    const m = new Map<ActorId, Coord>()
+    for (const p of pieces) m.set(p.id, p.pos)
+    return m
+  }, [pieces])
+
+  const strikeLunge =
+    boardFx?.kind === 'strike'
+      ? (() => {
+          const ap = posById.get(boardFx.attacker)
+          const dp = posById.get(boardFx.defenderId)
+          if (!ap || !dp) return null
+          return {
+            attacker: boardFx.attacker,
+            defenderKey: boardFx.defenderKey,
+            ...lungeDelta(ap, dp),
+          }
+        })()
+      : null
+
+  return (
+    <div className="holo-scene" data-cast-element={sceneCastElement ?? undefined}>
+      <div className="holo-frame" aria-hidden />
+
+      <div
+        className="holo-board"
+        style={{
+          gridTemplateColumns: `repeat(${size}, 1fr)`,
+          gridTemplateRows: `repeat(${size}, 1fr)`,
+        }}
+        onMouseLeave={() => onHoverChange(null)}
+      >
+        <svg className="holo-board__paths" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden>
+          {pathD ? <path d={pathD} pathLength={1} /> : null}
+        </svg>
+
+        {boardFx?.kind === 'move' ? (
+          <div className="holo-board__overlay" aria-hidden>
+            <MoveOverlayPiece
+              teamSlot={
+                pieces.find((x) => x.id === boardFx.actor)?.teamSlot ??
+                clampTeamSlot(0)
+              }
+              from={boardFx.from}
+              to={boardFx.to}
+              size={size}
+              extraClass={pieces.find((x) => x.id === boardFx.actor)?.extraClass ?? ''}
+            />
+          </div>
+        ) : null}
+
+        {cells.map((c) => {
+          const k = coordKey(c)
+          const suffix = getCellClassSuffix(c)
+          const isHovered = hoveredKey === k
+          const isPulse = pulseKey === k
+          const isCenter = k === centerKey
+          const here = pieces.filter((p) => coordKey(p.pos) === k && hiddenPieceActor !== p.id)
+          const overlap = here.length > 1
+
+          let cls = 'holo-cell'
+          if (suffix) cls += ` ${suffix}`
+          if (isHovered) cls += ' holo-cell--hover'
+          if (isPulse) cls += ' holo-cell--pulse'
+          if (isCenter) cls += ' holo-cell--center'
+
+          if (previewPatternKeys?.has(k)) cls += ' holo-cell--cast-preview'
+
+          if (boardFx?.kind === 'castOffensive' && boardFx.stagger.has(k)) {
+            cls += ` holo-cell--cast-resolve holo-cell--cast-elem-${boardFx.element}`
+          }
+          if (boardFx?.kind === 'castSelf' && boardFx.casterKey === k) {
+            cls += ` holo-cell--cast-self-resolve holo-cell--cast-elem-${boardFx.element}`
+          }
+          if (boardFx?.kind === 'reject' && boardFx.cellKey === k) {
+            cls += ' holo-cell--reject'
+          }
+          if (boardFx?.kind === 'strike' && boardFx.defenderKey === k) {
+            cls += ' holo-cell--strike-impact'
+          }
+
+          const stagger =
+            boardFx?.kind === 'castOffensive' && boardFx.stagger.has(k)
+              ? boardFx.stagger.get(k)!
+              : undefined
+
+          const tooltip = getCellTooltip(c)
+          const ariaLabel =
+            tooltip !== null
+              ? `Cell ${c.x} ${c.y} — ${tooltip.replace(/\n/g, '. ')}`
+              : `Cell ${c.x} ${c.y}`
+
+          return (
+            <button
+              key={k}
+              type="button"
+              className={cls}
+              style={
+                stagger !== undefined
+                  ? ({ ['--cast-stagger' as string]: stagger } as CSSProperties)
+                  : undefined
+              }
+              onClick={() => onCellClick(c)}
+              onMouseEnter={() => onHoverChange(k)}
+              aria-label={ariaLabel}
+            >
+              {tooltip !== null ? (
+                <span className="holo-cell__tooltip" aria-hidden>
+                  {tooltip}
+                </span>
+              ) : null}
+              {here.map((p) => {
+                const isLungeAtt = strikeLunge?.attacker === p.id
+                const base = pieceBaseClass(p.teamSlot)
+                return (
+                  <span
+                    key={p.id}
+                    className={`${base}${overlap ? ' holo-piece--both' : ''} ${p.extraClass} ${
+                      isLungeAtt ? 'holo-piece--strike-lunge' : ''
+                    }`}
+                    style={
+                      isLungeAtt
+                        ? ({
+                            ['--lunge-lx' as string]: strikeLunge!.lx,
+                            ['--lunge-ly' as string]: strikeLunge!.ly,
+                          } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {!overlap || here.indexOf(p) === here.length - 1 ? <span className="holo-piece-ring" /> : null}
+                  </span>
+                )
+              })}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
