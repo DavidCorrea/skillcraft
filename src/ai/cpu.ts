@@ -10,8 +10,46 @@ const LOSS_SCORE = -1_000_000
 
 function searchPliesForDifficulty(d: CpuDifficulty): number {
   if (d === 'easy') return 2
+  /** Above Hard (6); keep bounded so duel turns stay responsive in the browser. */
+  if (d === 'nightmare') return 8
   if (d === 'hard') return 6
   return 4
+}
+
+/**
+ * Paranoid search depth for 3+ fighters (team vs everyone else).
+ * Kept below duel depth — branching is much higher (casts/moves × actors).
+ */
+function searchPliesMulti(d: CpuDifficulty): number {
+  if (d === 'nightmare') return 5
+  if (d === 'hard') return 4
+  return 3
+}
+
+function sameTeam(state: GameState, a: ActorId, b: ActorId): boolean {
+  return state.teamByActor[a] === state.teamByActor[b]
+}
+
+function winningSideScore(state: GameState, perspectiveId: ActorId): number | null {
+  if (!state.winner) return null
+  return sameTeam(state, state.winner, perspectiveId) ? WIN_SCORE : LOSS_SCORE
+}
+
+function closestEnemyId(state: GameState, actor: ActorId): ActorId | null {
+  const ids = enemyIds(state, actor)
+  if (ids.length === 0) return null
+  const me = state.actors[actor]!
+  let bestId = ids[0]!
+  let bestD = manhattan(me.pos, state.actors[bestId]!.pos)
+  for (let i = 1; i < ids.length; i++) {
+    const id = ids[i]!
+    const d = manhattan(me.pos, state.actors[id]!.pos)
+    if (d < bestD) {
+      bestD = d
+      bestId = id
+    }
+  }
+  return bestId
 }
 
 function enemyIds(state: GameState, actor: ActorId): ActorId[] {
@@ -44,8 +82,8 @@ function otherInDuel(state: GameState, self: ActorId): ActorId {
 }
 
 /**
- * Chooses a CPU / AI action. Uses minimax for 1v1 duels when difficulty is not easy,
- * otherwise greedy heuristic (also used for multi-actor matches).
+ * Chooses a CPU / AI action. 1v1: two-player minimax. 3+ fighters: paranoid team search (Normal+).
+ * Easy: greedy with random noise.
  */
 export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
   const actions = allLegalActions(state, actorId)
@@ -62,34 +100,65 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
     }
   }
 
-  if (state.turnOrder.length > 2 || diff === 'easy') {
+  if (diff === 'easy') {
     return pickCpuGreedy(state, actorId, diff)
   }
 
-  const plies = searchPliesForDifficulty(diff)
   const ordered = [...actions].sort(
     (a, b) => tacticalPriority(state, actorId, b) - tacticalPriority(state, actorId, a),
   )
 
-  let best: GameAction = ordered[0]!
-  let bestScore = -Infinity
-  const other = otherInDuel(state, actorId)
+  const jitter =
+    diff === 'nightmare'
+      ? Math.random() * 0.001
+      : diff === 'hard'
+        ? Math.random() * 0.008
+        : Math.random() * 0.015
+
+  if (state.turnOrder.length === 2) {
+    const plies = searchPliesForDifficulty(diff)
+    let best: GameAction = ordered[0]!
+    let bestScore = -Infinity
+    const other = otherInDuel(state, actorId)
+
+    for (const action of ordered) {
+      const res = applyAction(state, actorId, action)
+      if (res.error) continue
+      const next = res.state
+      if (next.winner === other) continue
+
+      const score = minimax(next, plies - 1, -Infinity, Infinity, actorId, other)
+      if (score + jitter > bestScore) {
+        bestScore = score + jitter
+        best = action
+      }
+    }
+
+    return best
+  }
+
+  const pliesMulti = searchPliesMulti(diff)
+  let bestM: GameAction = ordered[0]!
+  let bestScoreM = -Infinity
 
   for (const action of ordered) {
     const res = applyAction(state, actorId, action)
     if (res.error) continue
     const next = res.state
-    if (next.winner === other) continue
+    const term = winningSideScore(next, actorId)
+    if (term === LOSS_SCORE) continue
 
-    const score = minimax(next, plies - 1, -Infinity, Infinity, actorId, other)
-    const jitter = diff === 'hard' ? Math.random() * 0.008 : Math.random() * 0.015
-    if (score + jitter > bestScore) {
-      bestScore = score + jitter
-      best = action
+    const score =
+      term === WIN_SCORE
+        ? WIN_SCORE
+        : paranoidSearch(next, pliesMulti - 1, -Infinity, Infinity, actorId)
+    if (score + jitter > bestScoreM) {
+      bestScoreM = score + jitter
+      bestM = action
     }
   }
 
-  return best
+  return bestM
 }
 
 function pickCpuGreedy(state: GameState, actorId: ActorId, diff: CpuDifficulty): GameAction {
@@ -101,6 +170,57 @@ function pickCpuGreedy(state: GameState, actorId: ActorId, diff: CpuDifficulty):
     return actions[Math.floor(Math.random() * actions.length)]!
   }
   return ordered[0]!
+}
+
+/**
+ * Team-based paranoid search: allies maximize shared eval; enemies minimize it (zero-sum).
+ */
+function paranoidSearch(
+  state: GameState,
+  depth: number,
+  alpha: number,
+  beta: number,
+  perspectiveId: ActorId,
+): number {
+  const terminal = winningSideScore(state, perspectiveId)
+  if (terminal !== null) return terminal
+  if (depth === 0) return evaluateStaticMulti(state, perspectiveId)
+
+  const actor = state.turn
+  const actions = orderedActions(state, actor)
+  if (actions.length === 0) return evaluateStaticMulti(state, perspectiveId)
+
+  const maximizing = sameTeam(state, actor, perspectiveId)
+
+  if (maximizing) {
+    let value = -Infinity
+    for (const action of actions) {
+      const res = applyAction(state, actor, action)
+      if (res.error) continue
+      const t = winningSideScore(res.state, perspectiveId)
+      if (t === WIN_SCORE) return WIN_SCORE
+      const child =
+        t === LOSS_SCORE ? LOSS_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId)
+      value = Math.max(value, child)
+      if (value > beta) return value
+      alpha = Math.max(alpha, value)
+    }
+    return value === -Infinity ? evaluateStaticMulti(state, perspectiveId) : value
+  }
+
+  let value = Infinity
+  for (const action of actions) {
+    const res = applyAction(state, actor, action)
+    if (res.error) continue
+    const t = winningSideScore(res.state, perspectiveId)
+    if (t === LOSS_SCORE) return LOSS_SCORE
+    const child =
+      t === WIN_SCORE ? WIN_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId)
+    value = Math.min(value, child)
+    if (value < alpha) return value
+    beta = Math.min(beta, value)
+  }
+  return value === Infinity ? evaluateStaticMulti(state, perspectiveId) : value
 }
 
 function minimax(
@@ -224,6 +344,39 @@ function evaluateStaticDuel(state: GameState, perspectiveId: ActorId, opponentId
 
   score += residualTilePressure(state, p.pos, opponentId) * 4
   score -= residualTilePressure(state, c.pos, perspectiveId) * 4
+
+  return score
+}
+
+/** Heuristic for 3+ fighters: team resource totals + primary threat vs nearest enemy. */
+function evaluateStaticMulti(state: GameState, perspectiveId: ActorId): number {
+  const myTeam = state.teamByActor[perspectiveId]!
+  let score = 0
+  for (const id of state.turnOrder) {
+    const a = state.actors[id]!
+    if (a.hp <= 0) continue
+    const side = state.teamByActor[id] === myTeam ? 1 : -1
+    score += side * (a.hp / Math.max(1, a.maxHp)) * 130
+    score += side * (a.mana / Math.max(1, a.maxMana)) * 32
+    score += side * (a.stamina / Math.max(1, a.maxStamina)) * 18
+    score -= side * statusPressureOnActor(a) * 6
+  }
+
+  const me = state.actors[perspectiveId]!
+  const foeId = closestEnemyId(state, perspectiveId)
+  if (!foeId) return score
+  const foe = state.actors[foeId]!
+  const dist = manhattan(me.pos, foe.pos)
+  const maxD = state.size * 2 - 2
+  score += ((maxD - dist) / Math.max(1, maxD)) * 42
+
+  if (dist === 1) {
+    score -= approxStrikeDamage(foe, me) * 0.42
+    score += approxStrikeDamage(me, foe) * 0.34
+  }
+
+  score += residualTilePressure(state, foe.pos, foeId) * 4
+  score -= residualTilePressure(state, me.pos, perspectiveId) * 4
 
   return score
 }

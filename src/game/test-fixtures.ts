@@ -114,3 +114,18 @@ export function duelBattleConfig(partial: Pick<
     match: matchSettingsDuel(partial),
   }
 }
+
+/** Four-way FFA — uses `matchSettingsFfa` (extra CPUs reuse the first CPU loadout/traits). */
+export function ffaBattleConfig(partial: Pick<
+  BattleConfig,
+  'level' | 'playerLoadout' | 'cpuLoadout' | 'playerTraits' | 'cpuTraits'
+>): BattleConfig {
+  const extra: [ExtraCpuBuild, ExtraCpuBuild] = [
+    { loadout: partial.cpuLoadout, traits: partial.cpuTraits },
+    { loadout: partial.cpuLoadout, traits: partial.cpuTraits },
+  ]
+  return {
+    ...partial,
+    match: matchSettingsFfa({ ...partial, extra }),
+  }
+}

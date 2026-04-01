@@ -98,8 +98,8 @@ describe('cpuDifficultyLabel', () => {
   it('capitalizes cpu difficulty', () => {
     const state = {
       humanActorId: 'h',
-      cpuDifficulty: { cpu: 'hard' },
+      cpuDifficulty: { cpu: 'nightmare' },
     } as unknown as GameState
-    expect(cpuDifficultyLabel(state, 'cpu')).toBe('Hard')
+    expect(cpuDifficultyLabel(state, 'cpu')).toBe('Nightmare')
   })
 })

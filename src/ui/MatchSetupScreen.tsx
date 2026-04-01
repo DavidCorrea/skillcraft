@@ -150,9 +150,9 @@ export function MatchSetupScreen({
                   available when a team has more than one fighter.
                 </p>
                 <p className="ls-modal__note">
-                  <strong>CPU difficulty</strong> applies to computer fighters. In <strong>1v1</strong> duels, Normal and
-                  Hard search deeper moves ahead (Hard more than Normal); Easy sometimes picks among legal moves at
-                  random. With <strong>three or more fighters</strong>, all levels use the same fast heuristic.
+                  <strong>CPU difficulty</strong> applies to computer fighters. Non-Easy levels use lookahead search:
+                  deeper in <strong>1v1</strong> than with <strong>three or more fighters</strong> (branching is higher
+                  in big matches). Nightmare &gt; Hard &gt; Normal; Easy sometimes picks among legal moves at random.
                 </p>
               </>
             }
@@ -253,6 +253,7 @@ export function MatchSetupScreen({
             <option value="easy">Easy</option>
             <option value="normal">Normal</option>
             <option value="hard">Hard</option>
+            <option value="nightmare">Nightmare</option>
           </select>
         </label>
 

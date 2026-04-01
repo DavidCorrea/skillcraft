@@ -121,7 +121,7 @@ export interface TileImpact {
 
 export type MatchMode = 'teams' | 'ffa'
 
-export type CpuDifficulty = 'easy' | 'normal' | 'hard'
+export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
 /** One battle log line; `subject` selects team tint in the UI (omit for neutral flavor text). */
 export interface BattleLogEntry {

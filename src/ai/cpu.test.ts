@@ -3,7 +3,7 @@ import { applyAction, allLegalActions, createInitialState, resetIdsForTests } fr
 import { pickCpuAction } from './cpu'
 import type { BattleConfig } from '../game/types'
 import { defaultTraitPoints } from '../game/traits'
-import { duelBattleConfig, TID } from '../game/test-fixtures'
+import { duelBattleConfig, ffaBattleConfig, TID } from '../game/test-fixtures'
 
 const cfg: BattleConfig = duelBattleConfig({
   level: 8,
@@ -74,9 +74,55 @@ describe('pickCpuAction', () => {
     }
     expect(allLegalActions(s, TID.cpu)).toEqual([{ type: 'skip' }])
     expect(pickCpuAction(s, TID.cpu)).toEqual({ type: 'skip' })
+    const sNightmare = {
+      ...s,
+      cpuDifficulty: { ...s.cpuDifficulty, [TID.cpu]: 'nightmare' as const },
+    }
+    expect(pickCpuAction(sNightmare, TID.cpu)).toEqual({ type: 'skip' })
     const r = applyAction(s, TID.cpu, { type: 'skip' })
     expect(r.error).toBeUndefined()
     expect(r.state!.turn).toBe(TID.human)
+  })
+
+  it('FFA non-easy CPU picks a legal action (paranoid multi-actor search)', () => {
+    resetIdsForTests()
+    const ffaCfg = ffaBattleConfig({
+      level: 8,
+      playerLoadout: [
+        { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+        { skillId: 'tide_touch', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+      ],
+      cpuLoadout: [
+        { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+        { skillId: 'spark', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+      ],
+      playerTraits: defaultTraitPoints(),
+      cpuTraits: defaultTraitPoints(),
+    })
+    let s = createInitialState(ffaCfg)
+    const skip = applyAction(s, TID.human, { type: 'skip' })
+    expect(skip.error).toBeUndefined()
+    s = skip.state!
+    expect(s.turn).toBe(TID.cpu)
+    s = { ...s, cpuDifficulty: { ...s.cpuDifficulty, [TID.cpu]: 'normal' } }
+    const legal = allLegalActions(s, TID.cpu)
+    const picked = pickCpuAction(s, TID.cpu)
+    const ok = legal.some((x) => {
+      if (x.type !== picked.type) return false
+      if (x.type === 'skip') return true
+      if (x.type === 'move' && picked.type === 'move')
+        return x.to.x === picked.to.x && x.to.y === picked.to.y
+      if (x.type === 'strike' && picked.type === 'strike')
+        return x.targetId === picked.targetId
+      return (
+        x.type === 'cast' &&
+        picked.type === 'cast' &&
+        x.skillId === picked.skillId &&
+        x.target.x === picked.target.x &&
+        x.target.y === picked.target.y
+      )
+    })
+    expect(ok).toBe(true)
   })
 
   it('chooses strike when it immediately wins', () => {
