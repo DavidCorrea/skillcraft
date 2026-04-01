@@ -646,7 +646,6 @@ export function gatherOffensiveHits(
 ): { targetId: ActorId; hits: number }[] {
   const out: { targetId: ActorId; hits: number }[] = []
   for (const id of state.turnOrder) {
-    if (id === actor) continue
     const t = state.actors[id]
     if (!t || t.hp <= 0) continue
     if (!canDamageTarget(state.matchMode, state.friendlyFire, state.teamByActor, actor, id)) continue

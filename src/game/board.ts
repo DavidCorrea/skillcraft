@@ -93,7 +93,7 @@ export function allCells(size: number): Coord[] {
   return out
 }
 
-/** Whether `attacker` may damage `target` (strikes, offensive skills, tile entry). */
+/** Whether `attacker` may damage `target` (strikes, offensive skills, tile entry). Self is always allowed — your skills and hazards can hurt you. Strikes still omit self via `legalStrikeTargets`. */
 export function canDamageTarget(
   matchMode: MatchMode,
   friendlyFire: boolean,
@@ -101,7 +101,7 @@ export function canDamageTarget(
   attacker: ActorId,
   target: ActorId,
 ): boolean {
-  if (attacker === target) return false
+  if (attacker === target) return true
   if (matchMode === 'ffa') return true
   const ta = teamByActor[attacker]
   const tb = teamByActor[target]

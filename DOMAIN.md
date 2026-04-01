@@ -5,7 +5,7 @@ Skillcraft is a **grid tactics** game: actors take turns to **move**, **strike**
 ## Match and sides
 
 - **Match mode** — `teams` (same `teamId` are allies) or `ffa` (everyone else is an enemy unless rules say otherwise).
-- **Friendly fire** — When enabled, skills and Strikes can hit allies per `canDamageTarget` rules.
+- **Friendly fire** — When **any team has more than one fighter**, skills and Strikes can hit allies (`canDamageTarget`). Not applicable in pure duel or FFA (each fighter is solo on their team). Self-damage from your own skills and residual tiles always applies.
 - **Human** — Exactly one `humanActorId` in `MatchSettings`; that player controls one roster entry.
 - **CPU** — Other roster entries use `pickCpuAction` with per-actor **CPU difficulty**: `easy` | `normal` | `hard` (search depth differs in duels).
 

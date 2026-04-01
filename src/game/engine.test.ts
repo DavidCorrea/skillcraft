@@ -150,6 +150,31 @@ describe('residual tile impacts', () => {
     expect(r.state!.actors[TID.cpu]!.hp).toBeLessThan(hp0)
     expect(r.state!.log.some((l) => l.text.includes('residual'))).toBe(true)
   })
+
+  it('harms the caster when they move onto their own lingering tile', () => {
+    resetIdsForTests()
+    let s = createInitialState(sampleConfig)
+    const hpBefore = s.actors[TID.human]!.hp
+    s = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 5 } }).state!
+    expect(s.turn).toBe(TID.cpu)
+    s = applyAction(s, TID.cpu, { type: 'skip' }).state!
+    const r = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } })
+    expect(r.error).toBeUndefined()
+    expect(r.state!.actors[TID.human]!.hp).toBeLessThan(hpBefore)
+    expect(r.state!.log.some((l) => l.text.includes('residual'))).toBe(true)
+  })
+})
+
+describe('self-damage from offensive skills', () => {
+  it('damages the caster when the pattern includes their cell', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig)
+    const hp0 = s.actors[TID.human]!.hp
+    const r = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 6 } })
+    expect(r.error).toBeUndefined()
+    expect(r.state!.actors[TID.human]!.hp).toBeLessThan(hp0)
+    expect(r.state!.log.some((l) => l.text.includes('damage'))).toBe(true)
+  })
 })
 
 describe('allLegalActions', () => {

@@ -39,6 +39,12 @@ export function GameGuide({ contextContent }: { contextContent: ReactNode }) {
                 <strong>Skip</strong> to end the turn. Order follows the roster.
               </p>
               <p className="ls-modal__note">
+                <span className="ls-modal__lead">Teams &amp; friendly fire.</span> Same team = allies when teams are
+                shared; in FFA everyone is on a different team. If <strong>any team has more than one fighter</strong>,{' '}
+                <strong>friendly fire</strong> is on: skills and Strikes can damage allies. You can also damage yourself
+                with your own skills and residual tiles.
+              </p>
+              <p className="ls-modal__note">
                 <span className="ls-modal__lead">Casts.</span> <strong>Mana cost</strong> scales with pattern size,
                 status stacks, mana discount, and <strong>distance</strong> to the target anchor (Manhattan; self-target
                 skills add no distance cost). <strong>Duplicate pattern cells</strong> repeat that offset—multiple hits on
