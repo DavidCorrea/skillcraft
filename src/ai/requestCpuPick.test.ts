@@ -19,7 +19,7 @@ const cfg = duelBattleConfig({
 })
 
 describe('requestCpuPick', () => {
-  it('uses synchronous pick when worker is null (Node / no Worker)', async () => {
+  it('uses synchronous pickCpuAction in Vitest (no Web Worker)', async () => {
     resetIdsForTests()
     let s = createInitialState(cfg)
     s = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } }).state!

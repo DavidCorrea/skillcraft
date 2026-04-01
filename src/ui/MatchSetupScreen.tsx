@@ -5,6 +5,7 @@ import {
   teamIdsHaveMultiMemberTeam,
   validateCustomTeamIds,
 } from '../game/match-roster'
+import { CPU_THINK_TIMEOUT_MS } from '../ai/cpuThinkBudget'
 import { randomCpuBuild } from '../game/randomCpuBuild'
 import { GameGuide } from './help/GameGuide'
 import './loadout/loadout-surface.css'
@@ -256,6 +257,14 @@ export function MatchSetupScreen({
             <option value="nightmare">Nightmare</option>
           </select>
         </label>
+
+        {difficulty === 'nightmare' ? (
+          <p className="ls-modal__note" role="status">
+            Nightmare uses very deep lookahead — CPU turns can take a long time and stress your machine. Expect up to{' '}
+            {CPU_THINK_TIMEOUT_MS / 1000} seconds per CPU turn (search is capped there; after that, the CPU falls back to
+            a quick move).
+          </p>
+        ) : null}
 
         {showFriendlyFire ? (
           <label className="ls-field ls-field--inline">

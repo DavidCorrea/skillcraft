@@ -170,7 +170,17 @@ export function BattleScreen({
         cpuLockRef.current = false
       }
 
-      void requestCpuPick(stateForPick, actor, cpuWorkerRef.current).then(
+      let cpuWorker = cpuWorkerRef.current
+      if (!cpuWorker) {
+        cpuWorker = createCpuWorker()
+        cpuWorkerRef.current = cpuWorker
+      }
+
+      void requestCpuPick(stateForPick, actor, cpuWorker, {
+        onWorkerReplaced: (w) => {
+          cpuWorkerRef.current = w
+        },
+      }).then(
         (action) => {
           if (action.type === 'move') {
             const from = stateForPick.actors[actor]!.pos
