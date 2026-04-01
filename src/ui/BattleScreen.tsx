@@ -24,6 +24,7 @@ import {
   type BoardFxState,
 } from './board/fx'
 import { ActorInspectModal } from './battle/ActorInspectModal'
+import { pickCpuThinkingPhrase } from './battle/cpu-thinking'
 import { battleActorLabel, describeBattleCellTooltip } from './battle/cell-tooltip'
 import { GameGuide } from './help/GameGuide'
 import './battle/battle-surface.css'
@@ -142,77 +143,106 @@ export function BattleScreen({
     if (g.winner || actor === g.humanActorId) return
 
     cpuLockRef.current = true
-    let action: GameAction
-    try {
-      action = pickCpuAction(g, actor)
-    } catch {
-      cpuLockRef.current = false
-      return
-    }
 
-    const finishCpu = () => {
-      cpuLockRef.current = false
+    const thinkingEntry = {
+      text: pickCpuThinkingPhrase(battleActorLabel(g, actor)),
+      subject: actor,
     }
+    setGame((prev) => ({ ...prev, log: [...prev.log, thinkingEntry] }))
+    const stateForPick: GameState = { ...g, log: [...g.log, thinkingEntry] }
 
-    if (action.type === 'move') {
-      const from = g.actors[actor]!.pos
-      const to = action.to
-      setBoardFx({ kind: 'move', actor, from, to })
-      setHiddenPieceActor(actor)
-      window.setTimeout(() => {
-        setGame((prev) => {
-          const r = applyAction(prev, actor, action)
-          return r.error ? prev : r.state
-        })
-        setBoardFx(null)
-        setHiddenPieceActor(null)
-        finishCpu()
-      }, MS.move)
-      return
-    }
-
-    if (action.type === 'strike') {
-      const tid = action.targetId ?? g.humanActorId
-      setBoardFx({
-        kind: 'strike',
-        attacker: actor,
-        defenderKey: coordKey(g.actors[tid]!.pos),
-        defenderId: tid,
-      })
-      window.setTimeout(() => {
-        const prev = gameRef.current
-        const r = applyAction(prev, actor, action)
-        if (r.error) {
-          setBoardFx(null)
-          finishCpu()
-          return
-        }
-        setGame(r.state)
-        setBoardFx(null)
-        if (r.state.winner) {
-          finishCpu()
-          return
-        }
-        scheduleKnockback(prev, r.state, actor, tid, finishCpu)
-      }, MS.strike)
-      return
-    }
-
-    if (action.type === 'cast') {
-      const def = getSkillDef(action.skillId)
-      const entry = g.loadouts[actor]?.find((e) => e.skillId === action.skillId)
-      if (!entry) {
-        finishCpu()
+    const runAfterThinkingPaint = () => {
+      let action: GameAction
+      try {
+        action = pickCpuAction(stateForPick, actor)
+      } catch {
+        cpuLockRef.current = false
         return
       }
 
-      if (def.selfTarget) {
-        setSceneCastElement(def.element)
+      const finishCpu = () => {
+        cpuLockRef.current = false
+      }
+
+      if (action.type === 'move') {
+        const from = stateForPick.actors[actor]!.pos
+        const to = action.to
+        setBoardFx({ kind: 'move', actor, from, to })
+        setHiddenPieceActor(actor)
+        window.setTimeout(() => {
+          setGame((prev) => {
+            const r = applyAction(prev, actor, action)
+            return r.error ? prev : r.state
+          })
+          setBoardFx(null)
+          setHiddenPieceActor(null)
+          finishCpu()
+        }, MS.move)
+        return
+      }
+
+      if (action.type === 'strike') {
+        const tid = action.targetId ?? stateForPick.humanActorId
         setBoardFx({
-          kind: 'castSelf',
-          casterKey: coordKey(g.actors[actor]!.pos),
-          element: def.element,
+          kind: 'strike',
+          attacker: actor,
+          defenderKey: coordKey(stateForPick.actors[tid]!.pos),
+          defenderId: tid,
         })
+        window.setTimeout(() => {
+          const prev = gameRef.current
+          const r = applyAction(prev, actor, action)
+          if (r.error) {
+            setBoardFx(null)
+            finishCpu()
+            return
+          }
+          setGame(r.state)
+          setBoardFx(null)
+          if (r.state.winner) {
+            finishCpu()
+            return
+          }
+          scheduleKnockback(prev, r.state, actor, tid, finishCpu)
+        }, MS.strike)
+        return
+      }
+
+      if (action.type === 'cast') {
+        const def = getSkillDef(action.skillId)
+        const entry = stateForPick.loadouts[actor]?.find((e) => e.skillId === action.skillId)
+        if (!entry) {
+          finishCpu()
+          return
+        }
+
+        if (def.selfTarget) {
+          setSceneCastElement(def.element)
+          setBoardFx({
+            kind: 'castSelf',
+            casterKey: coordKey(stateForPick.actors[actor]!.pos),
+            element: def.element,
+          })
+          window.setTimeout(() => {
+            setGame((prev) => {
+              const r = applyAction(prev, actor, action)
+              return r.error ? prev : r.state
+            })
+            setBoardFx(null)
+            setSceneCastElement(null)
+            finishCpu()
+          }, MS.castSelf)
+          return
+        }
+
+        const cells = patternCellsForCast(stateForPick, actor, action.skillId, action.target)
+        if (!cells) {
+          finishCpu()
+          return
+        }
+        const stagger = castResolveStaggerMap(cells)
+        setSceneCastElement(def.element)
+        setBoardFx({ kind: 'castOffensive', element: def.element, stagger })
         window.setTimeout(() => {
           setGame((prev) => {
             const r = applyAction(prev, actor, action)
@@ -221,37 +251,20 @@ export function BattleScreen({
           setBoardFx(null)
           setSceneCastElement(null)
           finishCpu()
-        }, MS.castSelf)
+        }, MS.castOff)
         return
       }
 
-      const cells = patternCellsForCast(g, actor, action.skillId, action.target)
-      if (!cells) {
-        finishCpu()
-        return
-      }
-      const stagger = castResolveStaggerMap(cells)
-      setSceneCastElement(def.element)
-      setBoardFx({ kind: 'castOffensive', element: def.element, stagger })
-      window.setTimeout(() => {
+      if (action.type === 'skip') {
         setGame((prev) => {
           const r = applyAction(prev, actor, action)
           return r.error ? prev : r.state
         })
-        setBoardFx(null)
-        setSceneCastElement(null)
         finishCpu()
-      }, MS.castOff)
-      return
+      }
     }
 
-    if (action.type === 'skip') {
-      setGame((prev) => {
-        const r = applyAction(prev, actor, action)
-        return r.error ? prev : r.state
-      })
-      finishCpu()
-    }
+    window.setTimeout(runAfterThinkingPaint, 0)
   }, [scheduleKnockback])
 
   useEffect(() => {
