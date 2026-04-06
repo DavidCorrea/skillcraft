@@ -18,12 +18,52 @@ function generateActorId(): string {
   return `id-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
-const DISPLAY_SYLLABLES = ['Vex', 'Shard', 'Null', 'Rook', 'Flux', 'Hex', 'Ion', 'Sol']
+/** Pool for per-match callsigns (shuffled; suffix added if roster exceeds unique combinations). */
+const CALLSIGN_PARTS = [
+  'Vex',
+  'Shard',
+  'Null',
+  'Rook',
+  'Flux',
+  'Hex',
+  'Ion',
+  'Sol',
+  'Ash',
+  'Bolt',
+  'Crow',
+  'Dusk',
+  'Echo',
+  'Frost',
+  'Glint',
+  'Haze',
+]
 
-function displayNameForSlot(index: number): string {
-  const a = DISPLAY_SYLLABLES[index % DISPLAY_SYLLABLES.length]!
-  const n = Math.floor(index / DISPLAY_SYLLABLES.length)
-  return n > 0 ? `${a}-${n}` : a
+function shuffleInPlace<T>(arr: T[], rnd: () => number): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1))
+    const t = arr[i]!
+    arr[i] = arr[j]!
+    arr[j] = t
+  }
+}
+
+/**
+ * Unique random-ish callsigns for every fighter in a match (human + CPUs + ally).
+ * Uses a shuffled pool; adds `-1`, `-2`, … style disambiguators when count exceeds one pass over the pool.
+ */
+export function assignCallsigns(count: number): string[] {
+  if (count <= 0) return []
+  const pool = [...CALLSIGN_PARTS]
+  shuffleInPlace(pool, Math.random)
+  const out: string[] = []
+  let i = 0
+  while (out.length < count) {
+    const base = pool[i % pool.length]!
+    const pass = Math.floor(i / pool.length)
+    out.push(pass === 0 ? base : `${base}-${pass}`)
+    i++
+  }
+  return out
 }
 
 /** True if some team id appears on more than one fighter. */
@@ -114,7 +154,11 @@ export function buildCustomMatchSettings(args: {
   teamIds: number[]
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty
+  /** One entry per CPU (same order as `cpuBuilds`). Omitted entries use `defaultCpuDifficulty`. */
+  cpuDifficulties?: CpuDifficulty[]
   teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
+  overtimeEnabled?: boolean
+  roundsUntilOvertime?: number
 }): MatchSettings {
   const { teamIds, cpuBuilds } = args
   const err = validateCustomTeamIds(teamIds)
@@ -122,8 +166,12 @@ export function buildCustomMatchSettings(args: {
   if (cpuBuilds.length !== teamIds.length - 1) {
     throw new Error('CPU builds must match fighter count minus one')
   }
+  if (args.cpuDifficulties !== undefined && args.cpuDifficulties.length !== cpuBuilds.length) {
+    throw new Error('cpuDifficulties must match cpuBuilds length')
+  }
 
   const humanId = generateActorId()
+  const names = assignCallsigns(1 + cpuBuilds.length)
   const roster: MatchRosterEntry[] = [
     {
       actorId: humanId,
@@ -131,7 +179,7 @@ export function buildCustomMatchSettings(args: {
       loadout: args.humanLoadout,
       traits: args.humanTraits,
       isHuman: true,
-      displayName: 'You',
+      displayName: names[0]!,
     },
   ]
 
@@ -147,9 +195,9 @@ export function buildCustomMatchSettings(args: {
       loadout: b.loadout,
       traits: b.traits,
       isHuman: false,
-      displayName: displayNameForSlot(i),
+      displayName: names[i + 1]!,
     })
-    perCpuDifficulty[id] = defDiff
+    perCpuDifficulty[id] = args.cpuDifficulties?.[i] ?? defDiff
   }
 
   return validateRosterMatch({
@@ -160,6 +208,10 @@ export function buildCustomMatchSettings(args: {
     defaultCpuDifficulty: defDiff,
     perCpuDifficulty,
     teamColorSlotByTeamId: args.teamColorSlotByTeamId,
+    ...(args.overtimeEnabled !== undefined ? { overtimeEnabled: args.overtimeEnabled } : {}),
+    ...(args.roundsUntilOvertime !== undefined
+      ? { roundsUntilOvertime: Math.max(1, args.roundsUntilOvertime) }
+      : {}),
   })
 }
 
@@ -223,6 +275,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
   }
 
   if (legacy.preset === 'duel') {
+    const names = assignCallsigns(2)
     const cpuId = generateActorId()
     const roster: MatchRosterEntry[] = [
       {
@@ -231,7 +284,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.playerLoadout,
         traits: config.playerTraits,
         isHuman: true,
-        displayName: 'You',
+        displayName: names[0]!,
       },
       {
         actorId: cpuId,
@@ -239,7 +292,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.cpuLoadout,
         traits: config.cpuTraits,
         isHuman: false,
-        displayName: displayNameForSlot(0),
+        displayName: names[1]!,
       },
     ]
     return {
@@ -255,6 +308,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
   if (legacy.preset === '1v3') {
     const extra = legacy.extraCpus ?? []
     if (extra.length !== 2) throw new Error('1v3 requires exactly two extra CPU builds')
+    const names = assignCallsigns(4)
     const c0 = generateActorId()
     const c1 = generateActorId()
     const c2 = generateActorId()
@@ -265,7 +319,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.playerLoadout,
         traits: config.playerTraits,
         isHuman: true,
-        displayName: 'You',
+        displayName: names[0]!,
       },
       {
         actorId: c0,
@@ -273,7 +327,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.cpuLoadout,
         traits: config.cpuTraits,
         isHuman: false,
-        displayName: displayNameForSlot(0),
+        displayName: names[1]!,
       },
       {
         actorId: c1,
@@ -281,7 +335,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: extra[0]!.loadout,
         traits: extra[0]!.traits,
         isHuman: false,
-        displayName: displayNameForSlot(1),
+        displayName: names[2]!,
       },
       {
         actorId: c2,
@@ -289,7 +343,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: extra[1]!.loadout,
         traits: extra[1]!.traits,
         isHuman: false,
-        displayName: displayNameForSlot(2),
+        displayName: names[3]!,
       },
     ]
     return {
@@ -309,6 +363,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
   if (legacy.preset === 'ffa') {
     const extra = legacy.extraCpus ?? []
     if (extra.length !== 2) throw new Error('FFA requires exactly two extra CPU builds')
+    const names = assignCallsigns(4)
     const c0 = generateActorId()
     const c1 = generateActorId()
     const c2 = generateActorId()
@@ -319,7 +374,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.playerLoadout,
         traits: config.playerTraits,
         isHuman: true,
-        displayName: 'You',
+        displayName: names[0]!,
       },
       {
         actorId: c0,
@@ -327,7 +382,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.cpuLoadout,
         traits: config.cpuTraits,
         isHuman: false,
-        displayName: displayNameForSlot(0),
+        displayName: names[1]!,
       },
       {
         actorId: c1,
@@ -335,7 +390,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: extra[0]!.loadout,
         traits: extra[0]!.traits,
         isHuman: false,
-        displayName: displayNameForSlot(1),
+        displayName: names[2]!,
       },
       {
         actorId: c2,
@@ -343,7 +398,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: extra[1]!.loadout,
         traits: extra[1]!.traits,
         isHuman: false,
-        displayName: displayNameForSlot(2),
+        displayName: names[3]!,
       },
     ]
     return {
@@ -362,6 +417,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
 
   if (legacy.preset === '2v2') {
     if (!legacy.ally || (legacy.extraCpus ?? []).length !== 1) throw new Error('2v2 requires ally + one extra CPU build')
+    const names = assignCallsigns(4)
     const allyId = generateActorId()
     const cpuA = generateActorId()
     const cpuB = generateActorId()
@@ -372,7 +428,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.playerLoadout,
         traits: config.playerTraits,
         isHuman: true,
-        displayName: 'You',
+        displayName: names[0]!,
       },
       {
         actorId: allyId,
@@ -380,7 +436,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: legacy.ally.loadout,
         traits: legacy.ally.traits,
         isHuman: false,
-        displayName: displayNameForSlot(0),
+        displayName: names[1]!,
       },
       {
         actorId: cpuA,
@@ -388,7 +444,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: config.cpuLoadout,
         traits: config.cpuTraits,
         isHuman: false,
-        displayName: displayNameForSlot(1),
+        displayName: names[2]!,
       },
       {
         actorId: cpuB,
@@ -396,7 +452,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
         loadout: legacy.extraCpus![0]!.loadout,
         traits: legacy.extraCpus![0]!.traits,
         isHuman: false,
-        displayName: displayNameForSlot(2),
+        displayName: names[3]!,
       },
     ]
     return {

@@ -76,6 +76,24 @@
   outline-offset: 2px;
 }
 
+.battle-surface__phase {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  min-width: 0;
+}
+
+.battle-surface__overtime-countdown {
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bs-foe);
+  white-space: nowrap;
+}
+
 .battle-surface__title {
   margin: 0;
   justify-self: center;
@@ -215,12 +233,152 @@
   flex-shrink: 0;
 }
 
+/* Log area: controls stay visible; only the message list scrolls */
+.battle-log__panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.75rem;
+}
+
+.battle-log__controls {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--bs-line);
+  background: linear-gradient(180deg, var(--bs-bg) 0%, var(--bs-bg) 88%, rgba(5, 6, 8, 0.92) 100%);
+  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.55);
+}
+
+.battle-log__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  border-top: none;
+}
+
+.battle-log__toolbar-label {
+  font-family: var(--bs-mono);
+  font-size: 0.38rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bs-muted);
+  margin-right: 0.15rem;
+}
+
+.battle-log__mode {
+  font-family: var(--bs-mono);
+  font-size: 0.36rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid var(--bs-line);
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.45);
+  color: var(--bs-muted);
+  cursor: pointer;
+}
+
+.battle-log__mode:hover {
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.battle-log__mode.is-on {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.battle-log__filter {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.25rem, 1fr));
+  align-items: center;
+  gap: 0.22rem 0.4rem;
+  margin-top: 0.28rem;
+  padding-top: 0.28rem;
+  border-top: 1px solid var(--bs-line);
+  width: 100%;
+}
+
+.battle-log__filter-label {
+  grid-column: 1 / -1;
+}
+
+.battle-log__filter-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  min-width: 0;
+  font-family: var(--bs-mono);
+  font-size: 0.34rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  cursor: pointer;
+  user-select: none;
+}
+
+.battle-log__filter-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battle-log__filter-item input {
+  margin: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  accent-color: #fbbf24;
+  cursor: pointer;
+}
+
+.battle-log__filter-item input:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.battle-log__filter-item--t0 {
+  color: #7ec8d4;
+}
+.battle-log__filter-item--t1 {
+  color: #d49890;
+}
+.battle-log__filter-item--t2 {
+  color: #8ec4a4;
+}
+.battle-log__filter-item--t3 {
+  color: #dcc070;
+}
+.battle-log__filter-item--t4 {
+  color: #c4b0f0;
+}
+.battle-log__filter-item--t5 {
+  color: #f0b078;
+}
+.battle-log__filter-item--t6 {
+  color: #f0a0c8;
+}
+.battle-log__filter-item--t7 {
+  color: #c8e870;
+}
+
+.battle-log__filter-item--caster {
+  color: var(--bs-muted);
+}
+
 .battle-log {
   flex: 1;
   min-height: 0;
-  margin-top: 0.35rem;
-  padding-top: 0.4rem;
-  border-top: 1px solid var(--bs-line);
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: none;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -243,6 +401,21 @@
 .battle-log__row--neutral {
   color: var(--bs-muted);
   border-left-color: rgba(148, 163, 184, 0.35);
+}
+
+.battle-log__row--caster {
+  color: var(--bs-muted);
+  border-left-color: rgba(148, 163, 184, 0.35);
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-style: italic;
+}
+
+.battle-log__row--banter {
+  font-style: italic;
+  opacity: 0.92;
+  text-transform: none;
+  letter-spacing: 0.06em;
 }
 
 .battle-log__row--t0 {
@@ -289,10 +462,14 @@
   text-shadow: 0 0 10px var(--actor-accent-dim);
 }
 
+/* Current turn — readable at a glance (panel + team tint). */
+.bs-actor.is-active {
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--actor-accent-dim) 0%, transparent 82%);
+}
+
 .bs-actor.is-active .bs-actor__label {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: currentColor;
+  color: var(--actor-accent, var(--bs-accent));
 }
 
 .bs-meter {

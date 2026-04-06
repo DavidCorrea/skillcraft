@@ -13,6 +13,7 @@ import {
   legalStrikeTargets,
   normalizeBattleConfig,
 } from '../game/engine'
+import { isOvertimeLethal, isOvertimeStormPulseRound } from '../game/overtime'
 import type { GameAction } from '../game/engine'
 import { createCpuWorker, requestCpuPick } from '../ai/requestCpuPick'
 import { effectiveCastRangeForLoadout, entryPointCost, getSkillDef, manaCostCastRange } from '../game/skills'
@@ -26,8 +27,10 @@ import {
   type BoardFxState,
 } from './board/fx'
 import { ActorInspectModal } from './battle/ActorInspectModal'
+import { expandBroadcastRows, type BroadcastRow } from './battle/broadcastLog'
+import { formatClassicRow } from './battle/classicLog'
 import { pickCpuThinkingPhrase } from './battle/cpu-thinking'
-import { battleActorLabel, describeBattleCellTooltip } from './battle/cell-tooltip'
+import { battleActorLabel, battlePanelLabel, describeBattleCellTooltip } from './battle/cell-tooltip'
 import { GameGuide } from './help/GameGuide'
 import { resolveTeamColorSlotForTeamId } from '../game/match-roster'
 import './battle/battle-surface.css'
@@ -42,6 +45,22 @@ const MS = {
   reject: 200,
   cpuDelay: 400,
 } as const
+
+const LOG_MODE_KEY = 'skillcraft-battle-log-mode'
+type LogMode = 'classic' | 'broadcast'
+
+function logRowClassBroadcast(
+  row: BroadcastRow,
+  game: GameState,
+  teamSlot: (teamId: number) => number,
+): string {
+  if (row.voice === 'caster') return 'battle-log__row battle-log__row--caster'
+  if (row.subject !== undefined) {
+    const slot = teamSlot(game.teamByActor[row.subject] ?? 0)
+    return `battle-log__row battle-log__row--t${slot}${row.banter ? ' battle-log__row--banter' : ''}`
+  }
+  return 'battle-log__row battle-log__row--neutral'
+}
 
 function resourcePct(current: number, max: number): number {
   if (max <= 0) return 0
@@ -76,6 +95,16 @@ function BsMeter({
   )
 }
 
+/** Shown beside the phase title when overtime rules apply (see `GameState.overtimeEnabled`). */
+function suddenDeathRailLabel(game: GameState): string | null {
+  if (!game.overtimeEnabled || game.winner || game.tie) return null
+  if (game.overtime) return 'Sudden death'
+  const r = Math.max(0, game.roundsUntilOvertime - game.fullRoundsCompleted)
+  if (r === 0) return 'Sudden death next round'
+  if (r === 1) return 'Sudden death in 1 round'
+  return `Sudden death in ${r} rounds`
+}
+
 export function BattleScreen({
   config,
   onExit,
@@ -94,8 +123,95 @@ export function BattleScreen({
   const [hiddenPieceActor, setHiddenPieceActor] = useState<ActorId | null>(null)
   const [sceneCastElement, setSceneCastElement] = useState<string | null>(null)
   const [inspectActorId, setInspectActorId] = useState<ActorId | null>(null)
+  const [logMode, setLogMode] = useState<LogMode>(() => {
+    try {
+      const v = localStorage.getItem(LOG_MODE_KEY)
+      return v === 'broadcast' ? 'broadcast' : 'classic'
+    } catch {
+      return 'classic'
+    }
+  })
+  /** `null` = show everyone. Otherwise only rows whose `subject` is in the set (subject-less actor lines still pass). */
+  const [logActorFilter, setLogActorFilter] = useState<Set<ActorId> | null>(null)
+  /** Broadcast only: play-by-play lines (`voice === 'caster'`). */
+  const [logShowCaster, setLogShowCaster] = useState(true)
 
   const normalizedMatch = useMemo(() => normalizeBattleConfig(config).match, [config])
+  const teamSlot = useCallback(
+    (teamId: number) => resolveTeamColorSlotForTeamId(teamId, normalizedMatch.teamColorSlotByTeamId),
+    [normalizedMatch.teamColorSlotByTeamId],
+  )
+
+  const classicRows = useMemo(() => {
+    const out: { text: string; subject?: ActorId; key: number }[] = []
+    game.log.forEach((entry, index) => {
+      const row = formatClassicRow(entry, game, index)
+      if (row) out.push({ text: row.text, subject: row.subject, key: index })
+    })
+    return out
+  }, [game])
+
+  const broadcastLogRows = useMemo(
+    () =>
+      game.log.flatMap((entry, index) =>
+        expandBroadcastRows(entry, game, index).map((row, j) => ({
+          row,
+          key: `${index}-${j}`,
+        })),
+      ),
+    [game],
+  )
+
+  const logRowMatchesActorFilter = useCallback(
+    (subject: ActorId | undefined) => {
+      if (logActorFilter === null) return true
+      if (subject === undefined) return true
+      return logActorFilter.has(subject)
+    },
+    [logActorFilter],
+  )
+
+  const filteredClassicRows = useMemo(
+    () => classicRows.filter((r) => logRowMatchesActorFilter(r.subject)),
+    [classicRows, logRowMatchesActorFilter],
+  )
+
+  const filteredBroadcastLogRows = useMemo(
+    () =>
+      broadcastLogRows.filter(({ row }) => {
+        if (row.voice === 'caster' && !logShowCaster) return false
+        return logRowMatchesActorFilter(row.subject)
+      }),
+    [broadcastLogRows, logRowMatchesActorFilter, logShowCaster],
+  )
+
+  const toggleLogActorFilter = useCallback((id: ActorId) => {
+    setLogActorFilter((prev) => {
+      const full = new Set(game.turnOrder)
+      if (prev === null) {
+        const next = new Set(full)
+        next.delete(id)
+        return next.size === 0 ? null : next
+      }
+      const next = new Set(prev)
+      if (next.has(id)) {
+        if (next.size <= 1) return prev
+        next.delete(id)
+      } else {
+        next.add(id)
+        if (next.size === full.size) return null
+      }
+      return next
+    })
+  }, [game.turnOrder])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOG_MODE_KEY, logMode)
+    } catch {
+      /* ignore */
+    }
+  }, [logMode])
 
   const gameRef = useRef(game)
   const battleLogRef = useRef<HTMLDivElement>(null)
@@ -106,7 +222,14 @@ export function BattleScreen({
   useLayoutEffect(() => {
     const el = battleLogRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [game.log.length])
+  }, [
+    game.log.length,
+    logMode,
+    logActorFilter,
+    logShowCaster,
+    filteredBroadcastLogRows.length,
+    filteredClassicRows.length,
+  ])
 
   const cpuLockRef = useRef(false)
   const cpuWorkerRef = useRef<Worker | null>(null)
@@ -155,6 +278,7 @@ export function BattleScreen({
     const thinkingEntry = {
       text: pickCpuThinkingPhrase(battleActorLabel(g, actor)),
       subject: actor,
+      detail: { kind: 'cpu_thinking' as const, actorId: actor },
     }
     const stateForPick: GameState = { ...g, log: [...g.log, thinkingEntry] }
 
@@ -288,10 +412,10 @@ export function BattleScreen({
   }, [scheduleKnockback])
 
   useEffect(() => {
-    if (game.winner || game.turn === game.humanActorId || cpuLockRef.current) return
+    if (game.winner || game.tie || game.turn === game.humanActorId || cpuLockRef.current) return
     const t = window.setTimeout(runCpuWithFx, MS.cpuDelay)
     return () => window.clearTimeout(t)
-  }, [game.turn, game.winner, game.log.length, runCpuWithFx])
+  }, [game.turn, game.winner, game.tie, game.log.length, game.humanActorId, runCpuWithFx])
 
   useEffect(() => {
     if (!pulseKey) return
@@ -404,7 +528,7 @@ export function BattleScreen({
   function onCellClick(c: Coord): void {
     setPulseKey(coordKey(c))
     setMessage(null)
-    if (game.winner || game.turn !== game.humanActorId) return
+    if (game.winner || game.tie || game.turn !== game.humanActorId) return
 
     const k = coordKey(c)
 
@@ -494,7 +618,7 @@ export function BattleScreen({
 
   function onStrikePlayer(): void {
     setMessage(null)
-    if (game.winner || game.turn !== game.humanActorId) return
+    if (game.winner || game.tie || game.turn !== game.humanActorId) return
     const targets = legalStrikeTargets(game, game.humanActorId)
     if (targets.length === 0) return
     if (targets.length === 1) {
@@ -519,6 +643,10 @@ export function BattleScreen({
       if (highlightCastLegal.has(k)) parts.push('holo-cell--hint-cast-legal')
       else if (highlightCastReach.has(k)) parts.push('holo-cell--hint-cast-reach')
     }
+    if (isOvertimeLethal(game, c)) {
+      parts.push('holo-cell--overtime-lethal')
+      if (isOvertimeStormPulseRound(game)) parts.push('holo-cell--overtime-lethal--pulse')
+    }
     return parts.join(' ')
   }
 
@@ -542,14 +670,18 @@ export function BattleScreen({
           ? 'Amber outline = valid anchor. Dim = range only.'
           : 'Select move, strike, or a skill.')
 
-  const railTitle = game.winner
-    ? {
-        className: 'battle-surface__title is-end',
-        text: game.winner === game.humanActorId ? 'VICTORY' : 'DEFEAT',
-      }
-    : game.turn === game.humanActorId
-      ? { className: 'battle-surface__title is-live', text: 'YOUR ACTION' }
-      : { className: 'battle-surface__title is-foe', text: 'HOSTILE TURN' }
+  const railTitle = game.tie
+    ? { className: 'battle-surface__title is-end', text: 'TIE' }
+    : game.winner
+      ? {
+          className: 'battle-surface__title is-end',
+          text: game.winner === game.humanActorId ? 'VICTORY' : 'DEFEAT',
+        }
+      : game.turn === game.humanActorId
+        ? { className: 'battle-surface__title is-live', text: 'YOUR ACTION' }
+        : { className: 'battle-surface__title is-foe', text: 'HOSTILE TURN' }
+
+  const suddenDeathRail = suddenDeathRailLabel(game)
 
   return (
     <div className="battle-surface">
@@ -557,7 +689,14 @@ export function BattleScreen({
         <button type="button" className="battle-surface__exit" onClick={onExit}>
           Loadout
         </button>
-        <h1 className={railTitle.className}>{railTitle.text}</h1>
+        <div className="battle-surface__phase">
+          <h1 className={railTitle.className}>{railTitle.text}</h1>
+          {suddenDeathRail ? (
+            <span className="battle-surface__overtime-countdown" aria-label={suddenDeathRail}>
+              {suddenDeathRail}
+            </span>
+          ) : null}
+        </div>
         <div className="battle-surface__help">
           <GameGuide
             contextContent={
@@ -573,6 +712,15 @@ export function BattleScreen({
                   <strong>Skip</strong> ends your turn immediately without moving, striking, or casting—useful when you
                   want to pass.
                 </p>
+                {game.overtimeEnabled ? (
+                  <p className="ls-modal__note">
+                    <strong>Sudden death</strong> is on for this match (N was set in match setup). Outside the safe
+                    zone, <em>pulsing</em> red means the storm will <strong>not</strong> deal damage when this full round
+                    ends; <em>solid</em> red means it will. The first boundary after sudden death starts is always a
+                    warning (no storm damage); then strike and skip alternate. The safe zone shrinks over time; storm
+                    hits skip armor and only reduce shield then HP.
+                  </p>
+                ) : null}
               </>
             }
           />
@@ -589,13 +737,14 @@ export function BattleScreen({
               const a = game.actors[id]!
               if (a.hp <= 0) return null
               const you = id === game.humanActorId
-              const label = battleActorLabel(game, id)
+              const label = battlePanelLabel(game, id)
               return (
                 <div
                   key={id}
                   role="button"
                   tabIndex={0}
-                  className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${!game.winner && game.turn === id ? ' is-active' : ''}`}
+                  className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${!game.winner && !game.tie && game.turn === id ? ' is-active' : ''}`}
+                  aria-current={!game.winner && !game.tie && game.turn === id ? 'true' : undefined}
                   aria-label={`Inspect ${label}`}
                   onClick={() => setInspectActorId(id)}
                   onKeyDown={(e) => {
@@ -617,24 +766,88 @@ export function BattleScreen({
               )
             })}
           </div>
-          <div
-            ref={battleLogRef}
-            className="battle-log"
-            aria-live="polite"
-            aria-label="Battle log"
-          >
-            {game.log.map((entry, i) => (
-              <p
-                key={i}
-                className={
-                  entry.subject !== undefined
-                    ? `battle-log__row battle-log__row--t${resolveTeamColorSlotForTeamId(game.teamByActor[entry.subject] ?? 0, normalizedMatch.teamColorSlotByTeamId)}`
-                    : 'battle-log__row battle-log__row--neutral'
-                }
-              >
-                {entry.text}
-              </p>
-            ))}
+          <div className="battle-log__panel">
+            <div className="battle-log__controls">
+              <div className="battle-log__toolbar" role="group" aria-label="Battle log style">
+                <span className="battle-log__toolbar-label">Log</span>
+                <button
+                  type="button"
+                  className={`battle-log__mode${logMode === 'classic' ? ' is-on' : ''}`}
+                  aria-pressed={logMode === 'classic'}
+                  onClick={() => setLogMode('classic')}
+                >
+                  Classic
+                </button>
+                <button
+                  type="button"
+                  className={`battle-log__mode${logMode === 'broadcast' ? ' is-on' : ''}`}
+                  aria-pressed={logMode === 'broadcast'}
+                  onClick={() => setLogMode('broadcast')}
+                >
+                  Broadcast
+                </button>
+              </div>
+              <div className="battle-log__filter" role="group" aria-label="Filter log by fighter">
+                <span className="battle-log__toolbar-label battle-log__filter-label">Show</span>
+                {game.turnOrder.map((id) => {
+                  const checked = logActorFilter === null || logActorFilter.has(id)
+                  const onlyVisible =
+                    logActorFilter !== null && logActorFilter.size === 1 && logActorFilter.has(id)
+                  const slot = teamSlot(game.teamByActor[id] ?? 0)
+                  return (
+                    <label
+                      key={id}
+                      className={`battle-log__filter-item battle-log__filter-item--t${slot}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={onlyVisible}
+                        onChange={() => toggleLogActorFilter(id)}
+                        aria-label={`Show log lines for ${battlePanelLabel(game, id)}`}
+                      />
+                      <span>{battlePanelLabel(game, id)}</span>
+                    </label>
+                  )
+                })}
+                {logMode === 'broadcast' && (
+                  <label className="battle-log__filter-item battle-log__filter-item--caster">
+                    <input
+                      type="checkbox"
+                      checked={logShowCaster}
+                      onChange={() => setLogShowCaster((v) => !v)}
+                      aria-label="Show caster play-by-play lines"
+                    />
+                    <span>Caster</span>
+                  </label>
+                )}
+              </div>
+            </div>
+            <div
+              ref={battleLogRef}
+              className="battle-log"
+              aria-live="polite"
+              aria-label="Battle log"
+            >
+            {logMode === 'classic'
+              ? filteredClassicRows.map(({ text, subject, key }) => (
+                  <p
+                    key={key}
+                    className={
+                      subject !== undefined
+                        ? `battle-log__row battle-log__row--t${teamSlot(game.teamByActor[subject] ?? 0)}`
+                        : 'battle-log__row battle-log__row--neutral'
+                    }
+                  >
+                    {text}
+                  </p>
+                ))
+              : filteredBroadcastLogRows.map(({ row, key }) => (
+                  <p key={key} className={logRowClassBroadcast(row, game, teamSlot)}>
+                    {row.text}
+                  </p>
+                ))}
+            </div>
           </div>
         </aside>
 
@@ -666,7 +879,7 @@ export function BattleScreen({
                 type="button"
                 className={`bs-btn${mode === 'move' ? ' is-on' : ''}`}
                 aria-pressed={mode === 'move'}
-                disabled={game.turn !== game.humanActorId || !!game.winner}
+                disabled={game.turn !== game.humanActorId || !!game.winner || game.tie}
                 onClick={() => {
                   setMode('move')
                   setCastSkillId(null)
@@ -677,7 +890,7 @@ export function BattleScreen({
               <button
                 type="button"
                 className={`bs-btn${mode === 'strikePick' ? ' is-on' : ''}`}
-                disabled={game.turn !== game.humanActorId || !!game.winner || !canStrike(game, game.humanActorId)}
+                disabled={game.turn !== game.humanActorId || !!game.winner || game.tie || !canStrike(game, game.humanActorId)}
                 title={
                   canStrike(game, game.humanActorId) ? 'Physical hit + bleeding (no mana)' : 'Adjacent to hostile required'
                 }
@@ -691,6 +904,7 @@ export function BattleScreen({
                 disabled={
                   game.turn !== game.humanActorId ||
                   !!game.winner ||
+                  game.tie ||
                   hasFrozen(game.actors[game.humanActorId]!)
                 }
                 title="End your turn without moving, striking, or casting"
@@ -721,7 +935,7 @@ export function BattleScreen({
                     type="button"
                     className={`bs-btn${mode === 'cast' && castSkillId === e.skillId ? ' is-armed' : ''}${mode === 'cast' && castSkillId === e.skillId ? ' is-on' : ''}`}
                     aria-pressed={mode === 'cast' && castSkillId === e.skillId}
-                    disabled={game.turn !== game.humanActorId || !!game.winner || !canAfford}
+                    disabled={game.turn !== game.humanActorId || !!game.winner || game.tie || !canAfford}
                     title={
                       !canAfford
                         ? `Need at least ${mMin} mana`

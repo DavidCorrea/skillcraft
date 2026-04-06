@@ -30,7 +30,7 @@ export function matchSettingsDuel(args: {
       loadout: args.playerLoadout,
       traits: args.playerTraits,
       isHuman: true,
-      displayName: 'You',
+      displayName: 'Vex',
     },
     {
       actorId: TID.cpu,
@@ -64,7 +64,7 @@ export function matchSettingsFfa(args: {
       loadout: args.playerLoadout,
       traits: args.playerTraits,
       isHuman: true,
-      displayName: 'You',
+      displayName: 'Vex',
     },
     {
       actorId: TID.cpu,
@@ -72,7 +72,7 @@ export function matchSettingsFfa(args: {
       loadout: args.cpuLoadout,
       traits: args.cpuTraits,
       isHuman: false,
-      displayName: 'Vex',
+      displayName: 'Shard',
     },
     {
       actorId: TID.cpu2,
@@ -80,7 +80,7 @@ export function matchSettingsFfa(args: {
       loadout: args.extra[0].loadout,
       traits: args.extra[0].traits,
       isHuman: false,
-      displayName: 'Shard',
+      displayName: 'Rook',
     },
     {
       actorId: TID.cpu3,

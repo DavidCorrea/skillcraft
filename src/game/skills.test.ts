@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clampSkillLoadoutEntry,
+  countGridToPatternOffsets,
   countHitsOnEnemy,
   entryPointCost,
   fitPlayerBudgetToLevel,
@@ -8,10 +9,43 @@ import {
   manaCostForCast,
   maxSkillPointsBudget,
   maxSkillsForLevel,
+  patternOffsetsToCountGrid,
+  tierPointCost,
   validateLoadout,
 } from './skills'
 import type { SkillLoadoutEntry } from './types'
 import { defaultTraitPoints } from './traits'
+
+function patternMultisetKey(p: { dx: number; dy: number }[]): string {
+  return p
+    .map((o) => `${o.dx},${o.dy}`)
+    .sort()
+    .join('|')
+}
+
+describe('patternOffsetsToCountGrid', () => {
+  it('round-trips with countGridToPatternOffsets preserving multiset', () => {
+    const pattern = [
+      { dx: 0, dy: 0 },
+      { dx: 0, dy: 0 },
+      { dx: -1, dy: 0 },
+    ]
+    const grid = patternOffsetsToCountGrid(pattern)
+    const back = countGridToPatternOffsets(grid)
+    expect(patternMultisetKey(back)).toBe(patternMultisetKey(pattern))
+  })
+
+  it('supports enlarged radius for loadout planner', () => {
+    const pattern = [
+      { dx: 0, dy: 0 },
+      { dx: 6, dy: -4 },
+    ]
+    const grid = patternOffsetsToCountGrid(pattern, 6)
+    expect(grid.length).toBe(13)
+    const back = countGridToPatternOffsets(grid)
+    expect(patternMultisetKey(back)).toBe(patternMultisetKey(pattern))
+  })
+})
 
 describe('entryPointCost', () => {
   it('counts pattern, stacks, and mana discount', () => {
@@ -25,6 +59,18 @@ describe('entryPointCost', () => {
       manaDiscount: 2,
     }
     expect(entryPointCost(e)).toBe(6)
+  })
+
+  it('adds triangular cost for cast and AoE tiers', () => {
+    const e: SkillLoadoutEntry = {
+      skillId: 'ember',
+      pattern: [{ dx: 0, dy: 0 }],
+      statusStacks: 1,
+      manaDiscount: 0,
+      rangeTier: 2,
+      aoeTier: 2,
+    }
+    expect(entryPointCost(e)).toBe(2 + tierPointCost(2) + tierPointCost(2))
   })
 })
 
@@ -106,6 +152,83 @@ describe('validateLoadout', () => {
     expect(validateLoadout(8, entries, maxSkillsForLevel(8), t1)).toBeNull()
     const t2 = { ...defaultTraitPoints(), agility: 4, intelligence: 4 }
     expect(validateLoadout(8, entries, maxSkillsForLevel(8), t2)).not.toBeNull()
+  })
+
+  it('rejects pattern offsets outside AoE Chebyshev radius', () => {
+    const entries: SkillLoadoutEntry[] = [
+      {
+        skillId: 'ember',
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 25, dy: 0 },
+        ],
+        statusStacks: 1,
+        manaDiscount: 0,
+      },
+    ]
+    expect(validateLoadout(14, entries, maxSkillsForLevel(14), defaultTraitPoints())).not.toBeNull()
+  })
+
+  it('accepts multi-hit on anchor at AoE tier 0 (radius 0)', () => {
+    const entries: SkillLoadoutEntry[] = [
+      {
+        skillId: 'ember',
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 0, dy: 0 },
+        ],
+        statusStacks: 1,
+        manaDiscount: 0,
+      },
+    ]
+    expect(validateLoadout(14, entries, maxSkillsForLevel(14), defaultTraitPoints())).toBeNull()
+  })
+
+  it('accepts off-anchor pattern when AoE tier covers Chebyshev radius', () => {
+    const entries: SkillLoadoutEntry[] = [
+      {
+        skillId: 'ember',
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 3, dy: -2 },
+        ],
+        statusStacks: 1,
+        manaDiscount: 0,
+        aoeTier: 3,
+      },
+    ]
+    expect(validateLoadout(14, entries, maxSkillsForLevel(14), defaultTraitPoints())).toBeNull()
+  })
+
+  it('rejects pattern beyond AoE tier 0 (anchor-only)', () => {
+    const entries: SkillLoadoutEntry[] = [
+      {
+        skillId: 'ember',
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 4, dy: 0 },
+        ],
+        statusStacks: 1,
+        manaDiscount: 0,
+      },
+    ]
+    expect(validateLoadout(14, entries, maxSkillsForLevel(14), defaultTraitPoints())).not.toBeNull()
+  })
+
+  it('accepts wider pattern when AoE tier reaches needed Chebyshev radius', () => {
+    const entries: SkillLoadoutEntry[] = [
+      {
+        skillId: 'ember',
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 4, dy: 0 },
+        ],
+        statusStacks: 1,
+        manaDiscount: 0,
+        aoeTier: 4,
+      },
+    ]
+    expect(validateLoadout(14, entries, maxSkillsForLevel(14), defaultTraitPoints())).toBeNull()
   })
 
   it('respects max skill count for level', () => {

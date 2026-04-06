@@ -20,9 +20,9 @@ const cfg: BattleConfig = duelBattleConfig({
 })
 
 describe('pickCpuAction', () => {
-  it('returns an action that applyAction accepts', () => {
+  it('returns an action that applyAction accepts', { timeout: 15_000 }, () => {
     resetIdsForTests()
-    let s = createInitialState(cfg)
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
     const r0 = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } })
     s = r0.state!
     const a = pickCpuAction(s, TID.cpu)
@@ -30,9 +30,9 @@ describe('pickCpuAction', () => {
     expect(r.error).toBeUndefined()
   })
 
-  it('matches one of the enumerated legal actions', () => {
+  it('matches one of the enumerated legal actions', { timeout: 15_000 }, () => {
     resetIdsForTests()
-    let s = createInitialState(cfg)
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } }).state!
     const legal = allLegalActions(s, TID.cpu)
     const picked = pickCpuAction(s, TID.cpu)
@@ -56,7 +56,7 @@ describe('pickCpuAction', () => {
 
   it('picks skip when skip is the only legal action', () => {
     resetIdsForTests()
-    let s = createInitialState(cfg)
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } }).state!
     // Rooted + no mana + not adjacent to human → no move, strike, or cast.
     s = {
@@ -99,7 +99,7 @@ describe('pickCpuAction', () => {
       playerTraits: defaultTraitPoints(),
       cpuTraits: defaultTraitPoints(),
     })
-    let s = createInitialState(ffaCfg)
+    let s = createInitialState(ffaCfg, { randomizeTurnOrder: false })
     const skip = applyAction(s, TID.human, { type: 'skip' })
     expect(skip.error).toBeUndefined()
     s = skip.state!
@@ -127,7 +127,7 @@ describe('pickCpuAction', () => {
 
   it('chooses strike when it immediately wins', () => {
     resetIdsForTests()
-    let s = createInitialState(cfg)
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } }).state!
     s = {
       ...s,

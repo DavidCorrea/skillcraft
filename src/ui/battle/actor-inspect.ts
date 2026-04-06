@@ -1,5 +1,6 @@
 import { traitDisplayByKey, traitReferenceZones } from '../../game/trait-reference'
 import {
+  effectiveAoERadius,
   effectiveCastRangeForLoadout,
   entryPointCost,
   getSkillDef,
@@ -123,6 +124,8 @@ export type SkillInspectMeta = {
   mpMax: number
   rangeLabel: string
   rangeTier: number
+  aoeLabel: string
+  aoeTier: number
   stacks: number
   loadoutPts: number
   selfTarget: boolean
@@ -132,6 +135,7 @@ export function skillInspectMeta(entry: SkillLoadoutEntry, traits: TraitPoints):
   const def = getSkillDef(entry.skillId)
   const maxR = effectiveCastRangeForLoadout(def, entry, traits)
   const { min: mpMin, max: mpMax } = manaCostCastRange(entry, def.selfTarget ? 0 : maxR)
+  const aoeR = effectiveAoERadius(def, entry)
   return {
     name: def.name,
     element: def.element,
@@ -139,6 +143,8 @@ export function skillInspectMeta(entry: SkillLoadoutEntry, traits: TraitPoints):
     mpMax,
     rangeLabel: def.selfTarget ? 'Self-cast' : `Cast range ${maxR}`,
     rangeTier: entry.rangeTier ?? 0,
+    aoeLabel: def.selfTarget ? '—' : `AoE radius ${aoeR}`,
+    aoeTier: entry.aoeTier ?? 0,
     stacks: entry.statusStacks,
     loadoutPts: entryPointCost(entry),
     selfTarget: !!def.selfTarget,
@@ -152,10 +158,13 @@ export function formatSkillInspectLine(entry: SkillLoadoutEntry, traits: TraitPo
   const { min: mMin, max: mMax } = manaCostCastRange(entry, def.selfTarget ? 0 : maxR)
   const manaStr = mMin === mMax ? `${mMin} MP` : `${mMin}–${mMax} MP`
   const tier = entry.rangeTier ?? 0
+  const aoeT = entry.aoeTier ?? 0
+  const aoeR = effectiveAoERadius(def, entry)
   const rangeBit = def.selfTarget ? 'self' : `range ${maxR}`
-  const tierBit = def.selfTarget || tier === 0 ? '' : ` · +${tier} tier`
+  const tierBit = def.selfTarget || tier === 0 ? '' : ` · cast+${tier}`
+  const aoeBit = def.selfTarget || aoeT === 0 ? '' : ` · AoE ${aoeR} (+${aoeT})`
   const patternN = entry.pattern.length
-  return `${def.name} (${def.element}) · ${patternN} cell${patternN === 1 ? '' : 's'} · ${entry.statusStacks} stack${entry.statusStacks === 1 ? '' : 's'} · ${manaStr} · ${rangeBit}${tierBit} · ${entryPointCost(entry)} loadout pts`
+  return `${def.name} (${def.element}) · ${patternN} cell${patternN === 1 ? '' : 's'} · ${entry.statusStacks} stack${entry.statusStacks === 1 ? '' : 's'} · ${manaStr} · ${rangeBit}${tierBit}${aoeBit} · ${entryPointCost(entry)} loadout pts`
 }
 
 export function cpuDifficultyLabel(state: GameState, id: ActorId): string | null {

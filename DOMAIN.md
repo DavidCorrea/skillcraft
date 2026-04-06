@@ -22,7 +22,7 @@ Allocated at loadout and **frozen at battle start**. They scale movement range, 
 ## Skills and loadout
 
 - Each **skill** has a definition in `skills.ts` (element, self-target vs ranged, etc.).
-- **Loadout** entries include: `skillId`, **pattern** (offsets from cast anchor — duplicate offsets mean multiple hits), **statusStacks**, optional **manaDiscount** and **rangeTier**.
+- **Loadout** entries include: `skillId`, **pattern** (offsets from cast anchor — duplicate offsets mean multiple hits), **statusStacks**, optional **manaDiscount**, **rangeTier** (extra cast range / anchor reach), and **aoeTier** (extra pattern reach from anchor). **AoE tier 0** means only the anchor cell unless the skill sets a non-zero `aoeBase` on its definition; each tier adds +1 Chebyshev radius. Cast range and AoE use the same triangular loadout point curve per tier.
 - **Mana cost** scales with pattern size, stacks, discounts, and Manhattan distance from caster to target (unless self-target).
 - **Tile impacts** — Some casts leave residual effects on cells (`TileImpact`); stepping in can apply status/damage.
 
@@ -106,6 +106,16 @@ When a new status is applied, `reactions.ts` runs **resolveStatusesAfterAdd**: p
 | Stagger | Slowed + shocked | Extends slow duration. |
 
 Overlapping triples (e.g. soaked + chilled + shock) resolve in this order: flash freeze consumes **soaked** before **Conductive** can run, so you may see **Brittle** instead of **Conductive** on the same application.
+
+## Sudden death (overtime)
+
+Optional match rules (`MatchSettings.overtimeEnabled`, `roundsUntilOvertime`): after **N full rounds** (each living fighter has taken one turn per round, `fullRoundsCompleted`), **sudden death** activates if enabled.
+
+- **Storm geometry** — Rolled once at activation (`rollStormActivation` in `overtime.ts`): a **storm center** near the board edge and a **safe radius** (Chebyshev distance from center). Cells outside that disk are **lethal** for storm purposes (`isOvertimeLethal`).
+- **Damage** — Storm ticks use `applyHpLoss`: **shield** is consumed first, then **HP**. Physical armor / fortitude do **not** apply. Damage amount scales with shrink steps (`STORM_BASE_DAMAGE`, `STORM_DAMAGE_INCREMENT` in `overtime.ts`).
+- **Cadence** — Storm damage does **not** hit every full-round boundary. The state alternates **skip** vs **strike** boundaries (`stormSkipsNextBoundary` on `OvertimeState`). On activation, the first boundary after overtime begins is a **skip** (no storm damage); after that, damage and skip alternate. **UI:** lethal tiles **pulse** when the **next** boundary will skip storm damage; **solid** red when the next boundary will apply it (`isOvertimeStormPulseRound`).
+- **Shrink** — The safe zone shrinks on a fixed schedule of overtime rounds (`SHRINK_EVERY_OT_ROUNDS` in `overtime.ts`). If a shrink-qualified round falls on a **skip** boundary, shrink is **deferred** to the next strike boundary (`deferredShrink`).
+- **Implementation** — `processFullRoundBoundary` in `engine.ts` drives activation, skip/strike, periodic storm vs shrink; helpers and geometry live in `overtime.ts`.
 
 ## Legacy vs roster config
 

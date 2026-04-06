@@ -195,10 +195,22 @@ export function ActorInspectModal({
                             <dd>{mpStr}</dd>
                             <dt>Range</dt>
                             <dd>{meta.rangeLabel}</dd>
+                            {!meta.selfTarget ? (
+                              <>
+                                <dt>AoE</dt>
+                                <dd>{meta.aoeLabel}</dd>
+                              </>
+                            ) : null}
                             {!meta.selfTarget && meta.rangeTier > 0 ? (
                               <>
-                                <dt>Range tier</dt>
+                                <dt>Cast tier</dt>
                                 <dd>+{meta.rangeTier}</dd>
+                              </>
+                            ) : null}
+                            {!meta.selfTarget && meta.aoeTier > 0 ? (
+                              <>
+                                <dt>AoE tier</dt>
+                                <dd>+{meta.aoeTier}</dd>
                               </>
                             ) : null}
                             <dt>Status stacks</dt>

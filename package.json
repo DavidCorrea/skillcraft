@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:balance": "vitest run src/game/balance-sim.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

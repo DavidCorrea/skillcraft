@@ -4,12 +4,13 @@ import {
   allLegalActions,
   applyTurnEntry,
   applyTurnStartHooks,
+  computeTurnStartTick,
   castReachableAnchors,
   createInitialState,
   legalCasts,
   resetIdsForTests,
 } from './engine'
-import type { BattleConfig } from './types'
+import type { BattleConfig, MatchSettings } from './types'
 import { coordKey } from './board'
 import { defaultTraitPoints, STAMINA_REGEN_PER_TURN, STAMINA_STRIKE_COST } from './traits'
 import { duelBattleConfig, matchSettingsFfa, TID } from './test-fixtures'
@@ -25,20 +26,55 @@ const sampleConfig: BattleConfig = duelBattleConfig({
   cpuTraits: defaultTraitPoints(),
 })
 
+describe('sudden death overtime', () => {
+  it('activates after N full rounds when enabled', () => {
+    resetIdsForTests()
+    const base = duelBattleConfig({
+      level: 8,
+      playerLoadout: sampleConfig.playerLoadout,
+      cpuLoadout: sampleConfig.cpuLoadout,
+      playerTraits: defaultTraitPoints(),
+      cpuTraits: defaultTraitPoints(),
+    })
+    const cfg: BattleConfig = {
+      ...base,
+      match: {
+        ...(base.match as MatchSettings),
+        overtimeEnabled: true,
+        roundsUntilOvertime: 1,
+      },
+    }
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
+    expect(s.overtimeEnabled).toBe(true)
+    expect(s.overtime).toBeNull()
+    s = applyAction(s, TID.human, { type: 'skip' }).state!
+    expect(s.fullRoundsCompleted).toBe(0)
+    s = applyAction(s, TID.cpu, { type: 'skip' }).state!
+    expect(s.fullRoundsCompleted).toBe(1)
+    expect(s.overtime).not.toBeNull()
+  })
+})
+
 describe('createInitialState', () => {
   it('places actors on opposite mid edges', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     expect(s.actors[TID.human]!.pos).toEqual({ x: 3, y: 6 })
     expect(s.actors[TID.cpu]!.pos).toEqual({ x: 3, y: 0 })
     expect(s.turn).toBe(TID.human)
+  })
+
+  it('shuffles who goes first by default', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { rng: () => 0.4 })
+    expect(s.turn).toBe(TID.cpu)
   })
 })
 
 describe('applyAction', () => {
   it('allows orthogonal move', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } })
     expect(r.error).toBeUndefined()
     expect(r.state!.actors[TID.human]!.pos).toEqual({ x: 3, y: 5 })
@@ -47,21 +83,21 @@ describe('applyAction', () => {
 
   it('rejects out-of-turn action', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.cpu, { type: 'move', to: { x: 3, y: 1 } })
     expect(r.error).toBe('Not your turn.')
   })
 
   it('rejects strike when not adjacent to enemy', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.human, { type: 'strike' })
     expect(r.error).toMatch(/adjacent/)
   })
 
   it('deducts stamina on move', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const startStamina = s.actors[TID.human]!.stamina
     const r = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } })
     expect(r.error).toBeUndefined()
@@ -70,7 +106,7 @@ describe('applyAction', () => {
 
   it('rejects strike when stamina is too low', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const low = {
       ...s,
       actors: {
@@ -85,7 +121,7 @@ describe('applyAction', () => {
 
   it('skip ends turn and logs', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.human, { type: 'skip' })
     expect(r.error).toBeUndefined()
     expect(r.state!.turn).toBe(TID.cpu)
@@ -96,7 +132,7 @@ describe('applyAction', () => {
 describe('applyTurnStartHooks', () => {
   it('applies DoT from burning', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const actor = {
       ...s.actors[TID.human]!,
       mana: 5,
@@ -111,12 +147,47 @@ describe('applyTurnStartHooks', () => {
     expect(next.mana).toBe(6)
     expect(next.stamina).toBe(4 + STAMINA_REGEN_PER_TURN)
   })
+
+  it('computeTurnStartTick actor matches applyTurnStartHooks', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const actor = {
+      ...s.actors[TID.human]!,
+      mana: 5,
+      maxMana: 10,
+      manaRegenPerTurn: 1,
+      stamina: 4,
+      maxStamina: 8,
+      statuses: [{ id: 'x', tag: { t: 'burning' as const, duration: 2, dot: 3 } }],
+    }
+    expect(computeTurnStartTick(actor).actor).toEqual(applyTurnStartHooks(actor))
+    expect(computeTurnStartTick(actor).dotDamage).toBe(3)
+  })
+})
+
+describe('turn tick log', () => {
+  it('logs resource refresh when the next actor is not at max mana', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const cpuNotFull = {
+      ...s,
+      actors: {
+        ...s.actors,
+        [TID.cpu]: { ...s.actors[TID.cpu]!, mana: 1 },
+      },
+    }
+    const r = applyAction(cpuNotFull, TID.human, { type: 'skip' })
+    expect(r.error).toBeUndefined()
+    const resourceLine = r.state!.log.find((l) => l.detail?.kind === 'resource_tick')
+    expect(resourceLine).toBeDefined()
+    expect(resourceLine!.text).toMatch(/^Hostile gains \d+ mana and \d+ stamina\.$/)
+  })
 })
 
 describe('castReachableAnchors', () => {
   it('includes in-range anchors even when the enemy is not in the pattern', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = castReachableAnchors(s, TID.human, 'ember')
     expect(r.length).toBeGreaterThan(0)
     const legal = legalCasts(s, TID.human).filter((x) => x.skillId === 'ember')
@@ -127,7 +198,7 @@ describe('castReachableAnchors', () => {
 describe('residual tile impacts', () => {
   it('allows a cast when the enemy is not in the pattern and lays a lingering tile', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 2 } })
     expect(r.error).toBeUndefined()
     expect(r.state!.impactedTiles[coordKey({ x: 3, y: 2 })]).toMatchObject({
@@ -139,7 +210,7 @@ describe('residual tile impacts', () => {
 
   it('harms the opponent when they move onto a lingering tile', () => {
     resetIdsForTests()
-    let s = createInitialState(sampleConfig)
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 2 } }).state!
     expect(s.turn).toBe(TID.cpu)
     const hp0 = s.actors[TID.cpu]!.hp
@@ -153,7 +224,7 @@ describe('residual tile impacts', () => {
 
   it('harms the caster when they move onto their own lingering tile', () => {
     resetIdsForTests()
-    let s = createInitialState(sampleConfig)
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const hpBefore = s.actors[TID.human]!.hp
     s = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 5 } }).state!
     expect(s.turn).toBe(TID.cpu)
@@ -168,7 +239,7 @@ describe('residual tile impacts', () => {
 describe('self-damage from offensive skills', () => {
   it('damages the caster when the pattern includes their cell', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const hp0 = s.actors[TID.human]!.hp
     const r = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 6 } })
     expect(r.error).toBeUndefined()
@@ -180,7 +251,7 @@ describe('self-damage from offensive skills', () => {
 describe('allLegalActions', () => {
   it('returns only legal actions for cpu on cpu turn', () => {
     resetIdsForTests()
-    let s = createInitialState(sampleConfig)
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } })
     s = r.state!
     const actions = allLegalActions(s, TID.cpu)
@@ -213,7 +284,7 @@ const ffaConfig: BattleConfig = {
 describe('multi-actor strike', () => {
   it('rejects ambiguous strike without targetId when two enemies are adjacent', () => {
     resetIdsForTests()
-    let s = createInitialState(ffaConfig)
+    let s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
     s = {
       ...s,
       actors: {
@@ -230,7 +301,7 @@ describe('multi-actor strike', () => {
 
   it('accepts strike with explicit targetId', () => {
     resetIdsForTests()
-    let s = createInitialState(ffaConfig)
+    let s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
     s = {
       ...s,
       actors: {
@@ -249,7 +320,7 @@ describe('multi-actor strike', () => {
 describe('FFA win condition', () => {
   it('declares last actor alive as winner', () => {
     resetIdsForTests()
-    const s = createInitialState(ffaConfig)
+    const s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
     const oneLeft = {
       ...s,
       actors: {

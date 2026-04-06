@@ -109,6 +109,22 @@ export interface ActorState {
   statuses: StatusInstance[]
 }
 
+export type SkillId =
+  | 'ember'
+  | 'frost_bolt'
+  | 'tide_touch'
+  | 'spark'
+  | 'venom_dart'
+  | 'zephyr_cut'
+  | 'tremor'
+  | 'arcane_pulse'
+  | 'void_lance'
+  | 'mend'
+  | 'ward'
+  | 'purge'
+  | 'splinter'
+  | 'caustic_cloud'
+
 /** Lingering skill energy on a board cell — harms enemies (per friendly-fire rules) when they enter. */
 export interface TileImpact {
   skillId: SkillId
@@ -126,10 +142,139 @@ export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 /** Visual palette slot for board tokens and UI (maps to CSS `t0`–`t7`). */
 export type TeamColorSlot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
+/** Keys matching `reactionMessages` in status-reference (for battle log detail). */
+export type StatusReactionKey =
+  | 'melt'
+  | 'evaporate'
+  | 'detonate'
+  | 'overload'
+  | 'cauterize'
+  | 'coagulate'
+  | 'wildfire'
+  | 'parch'
+  | 'meltWard'
+  | 'flashFreeze'
+  | 'mud'
+  | 'waterlogged'
+  | 'stranglehold'
+  | 'grounded'
+  | 'crystallize'
+  | 'brittle'
+  | 'caustic'
+  | 'conductive'
+  | 'disrupt'
+  | 'calledShot'
+  | 'necrosis'
+  | 'tar'
+  | 'stagger'
+
+/** Structured payload for broadcast log; Classic uses `text` only. */
+export type BattleLogDetail =
+  | { kind: 'battle_start' }
+  | { kind: 'turn'; actorId: ActorId }
+  | { kind: 'move'; actorId: ActorId }
+  | { kind: 'skip'; actorId: ActorId }
+  | {
+      kind: 'strike'
+      actorId: ActorId
+      targetId: ActorId
+      damage: number
+      /** After damage; for broadcast clutch / elimination copy. */
+      targetHpAfter?: number
+      targetMaxHp?: number
+      killed?: boolean
+    }
+  | { kind: 'lifesteal'; actorId: ActorId; amount: number }
+  | {
+      kind: 'cast_self_heal'
+      skillId: SkillId
+      actorId: ActorId
+      heal: number
+      manaCost: number
+    }
+  | { kind: 'cast_self_ward'; skillId: SkillId; actorId: ActorId; manaCost: number }
+  | {
+      kind: 'cast_self_purge'
+      skillId: SkillId
+      actorId: ActorId
+      cleanseCount: number
+      manaCost: number
+    }
+  | { kind: 'cast_linger'; skillId: SkillId; actorId: ActorId; manaCost: number }
+  | {
+      kind: 'cast_damage'
+      skillId: SkillId
+      actorId: ActorId
+      totalDamage: number
+      manaCost: number
+      targetCount: number
+      /** Per target after damage — for broadcast clutch / multi-hit narration. */
+      hitSnapshots?: { targetId: ActorId; hpAfter: number; maxHp: number }[]
+    }
+  | {
+      kind: 'residual_trigger'
+      skillId: SkillId
+      victimId: ActorId
+      damage: number
+      victimHpAfter?: number
+      victimMaxHp?: number
+      killed?: boolean
+    }
+  | { kind: 'status_reaction'; reactionKey: StatusReactionKey; targetId: ActorId }
+  | { kind: 'frozen_skip'; actorId: ActorId }
+  | { kind: 'win'; winnerId: ActorId; winnerHpAfter?: number; winnerMaxHp?: number }
+  | { kind: 'turn_tick'; actorId: ActorId; dotDamage?: number; regen?: number }
+  | { kind: 'resource_tick'; actorId: ActorId; manaGained: number; staminaGained: number }
+  | { kind: 'knockback'; attackerId: ActorId; targetId: ActorId }
+  | { kind: 'battle_milestone'; milestone: 'first_blood'; victimId: ActorId }
+  | { kind: 'cpu_thinking'; actorId: ActorId }
+  | {
+      kind: 'cpu_situational'
+      flavor: 'relief_not_melee_chosen' | 'relief_not_spell_focus'
+      attackerId: ActorId
+      /** Primary victim: melee target, or first target hit by the spell. */
+      focusTargetId: ActorId
+      relievedIds: ActorId[]
+    }
+  | { kind: 'overtime_begin' }
+  | {
+      kind: 'overtime_storm'
+      victimId: ActorId
+      damage: number
+      reason: 'periodic' | 'engulf'
+    }
+  | { kind: 'overtime_shrink'; safeRadiusAfter: number }
+  | { kind: 'tie' }
+
 /** One battle log line; `subject` selects team tint in the UI (omit for neutral flavor text). */
 export interface BattleLogEntry {
   text: string
   subject?: ActorId
+  /** Broadcast / tooling metadata; optional for backwards compatibility. */
+  detail?: BattleLogDetail
+  /** When false, Classic mode hides this row (broadcast-only situational lines). */
+  classicVisible?: boolean
+}
+
+/** Sudden death / battle-royale storm — geometry rolled once at activation. */
+export interface OvertimeState {
+  stormCenter: Coord
+  /** Safe Chebyshev disk: max(|x-cx|,|y-cy|) <= safeRadius. */
+  safeRadius: number
+  /** Increments on each shrink; damage scales with this. */
+  damageStep: number
+  /** Full rounds completed while overtime is active (for shrink cadence). */
+  otRoundsCompleted: number
+  /**
+   * When true, the next full-round boundary will not apply storm damage (preview round).
+   * After each damage boundary this is set true; after a skipped boundary it is false.
+   */
+  stormSkipsNextBoundary: boolean
+  /**
+   * When a shrink-qualified round was skipped (no-damage boundary), the next damage boundary
+   * performs the shrink instead of periodic storm.
+   */
+  deferredShrink: boolean
 }
 
 export interface GameState {
@@ -151,23 +296,19 @@ export interface GameState {
   humanActorId: ActorId
   /** Per-CPU difficulty; keyed by actor id. */
   cpuDifficulty: Record<ActorId, CpuDifficulty>
+  /** Set after the first elimination is logged (first blood). */
+  firstBloodLogged?: boolean
+  /** Full rounds completed (each living actor has acted once per round). */
+  fullRoundsCompleted: number
+  /** Copied from match settings at battle start. */
+  overtimeEnabled: boolean
+  /** Rounds until sudden death when overtime is enabled. */
+  roundsUntilOvertime: number
+  /** Null until sudden death activates. */
+  overtime: OvertimeState | null
+  /** Everyone eliminated at once (e.g. same storm tick). */
+  tie: boolean
 }
-
-export type SkillId =
-  | 'ember'
-  | 'frost_bolt'
-  | 'tide_touch'
-  | 'spark'
-  | 'venom_dart'
-  | 'zephyr_cut'
-  | 'tremor'
-  | 'arcane_pulse'
-  | 'void_lance'
-  | 'mend'
-  | 'ward'
-  | 'purge'
-  | 'splinter'
-  | 'caustic_cloud'
 
 /** Offset from the cast target cell; duplicates mean that cell is hit multiple times (extra damage). */
 export interface PatternOffset {
@@ -193,6 +334,11 @@ export interface SkillLoadoutEntry {
    * Ignored for self-target skills.
    */
   rangeTier?: number
+  /**
+   * Per-skill AoE tiers: +1 Chebyshev radius from anchor per tier (tier 0 = anchor cell only, unless the skill sets `aoeBase`).
+   * Same triangular point cost as `rangeTier`. Ignored for self-target skills.
+   */
+  aoeTier?: number
 }
 
 /** Extra CPU beyond the first (`cpu`). */
@@ -229,6 +375,13 @@ export interface MatchSettings {
    * Defaults to `clamp(teamId, 0, 7)` when absent or for a team with no entry.
    */
   teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
+  /**
+   * When true, sudden death activates after `roundsUntilOvertime` full rounds.
+   * Default false for existing matches / tests.
+   */
+  overtimeEnabled?: boolean
+  /** Required when overtime is on; typical default 12. */
+  roundsUntilOvertime?: number
 }
 
 /**

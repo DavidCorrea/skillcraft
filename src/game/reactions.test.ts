@@ -16,7 +16,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'burning', duration: 3, dot: 2 })]
     const incoming = st({ t: 'chilled', duration: 2 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Melt'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Melt'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'chilled')).toBe(false)
   })
 
@@ -24,7 +24,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'burning', duration: 2, dot: 2 })]
     const incoming = st({ t: 'soaked', duration: 3 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Evaporate'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Evaporate'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'soaked')).toBe(false)
   })
 
@@ -32,7 +32,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'soaked', duration: 3 })]
     const incoming = st({ t: 'shocked', duration: 2, vuln: 1 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Conductive'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Conductive'))).toBe(true)
     const shock = statuses.find((s) => s.tag.t === 'shocked')
     expect(shock?.tag.t === 'shocked' && shock.tag.vuln).toBeGreaterThan(1)
   })
@@ -41,7 +41,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'burning', duration: 2, dot: 3 })]
     const incoming = st({ t: 'poisoned', duration: 4, dot: 2 })
     const { statuses, messages, immediateDamage } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Detonate'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Detonate'))).toBe(true)
     expect(immediateDamage).toBe(5)
     expect(statuses.some((s) => s.tag.t === 'burning')).toBe(false)
     expect(statuses.some((s) => s.tag.t === 'poisoned')).toBe(false)
@@ -51,7 +51,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'frozen', turns: 2 })]
     const incoming = st({ t: 'soaked', duration: 3 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Flash freeze'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Flash freeze'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'soaked')).toBe(false)
     const fr = statuses.find((s) => s.tag.t === 'frozen')
     expect(fr?.tag.t === 'frozen' && fr.tag.turns).toBe(1)
@@ -61,7 +61,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'burning', duration: 3, dot: 4 })]
     const incoming = st({ t: 'shocked', duration: 2, vuln: 2 })
     const { statuses, messages, immediateDamage } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Overload'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Overload'))).toBe(true)
     expect(immediateDamage).toBeGreaterThan(0)
     expect(statuses.some((s) => s.tag.t === 'shocked')).toBe(false)
   })
@@ -70,7 +70,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'bleeding', duration: 3, dot: 2 })]
     const incoming = st({ t: 'burning', duration: 3, dot: 2 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Cauterize'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Cauterize'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'bleeding')).toBe(false)
   })
 
@@ -78,7 +78,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'bleeding', duration: 3, dot: 4 })]
     const incoming = st({ t: 'poisoned', duration: 4, dot: 4 })
     const { statuses, messages, immediateDamage } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Coagulate'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Coagulate'))).toBe(true)
     expect(immediateDamage).toBeGreaterThan(0)
     expect(statuses.some((s) => s.tag.t === 'bleeding')).toBe(false)
     expect(statuses.some((s) => s.tag.t === 'poisoned')).toBe(true)
@@ -88,7 +88,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'rooted', duration: 2 })]
     const incoming = st({ t: 'burning', duration: 2, dot: 2 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Wildfire'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Wildfire'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'rooted')).toBe(false)
   })
 
@@ -96,7 +96,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'muddy', duration: 3 })]
     const incoming = st({ t: 'burning', duration: 2, dot: 2 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Parch'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Parch'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'muddy')).toBe(false)
   })
 
@@ -104,7 +104,7 @@ describe('resolveStatusesAfterAdd', () => {
     const before: StatusInstance[] = [st({ t: 'silenced', duration: 2 })]
     const incoming = st({ t: 'shocked', duration: 2, vuln: 1 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Disrupt'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Disrupt'))).toBe(true)
     expect(statuses.some((s) => s.tag.t === 'silenced')).toBe(false)
   })
 
@@ -115,9 +115,9 @@ describe('resolveStatusesAfterAdd', () => {
     ]
     const incoming = st({ t: 'shocked', duration: 2, vuln: 1 })
     const { statuses, messages } = resolveStatusesAfterAdd(before, incoming, nid)
-    expect(messages.some((m) => m.includes('Flash freeze'))).toBe(true)
-    expect(messages.some((m) => m.includes('Brittle'))).toBe(true)
-    expect(messages.some((m) => m.includes('Conductive'))).toBe(false)
+    expect(messages.some((m) => m.text.includes('Flash freeze'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Brittle'))).toBe(true)
+    expect(messages.some((m) => m.text.includes('Conductive'))).toBe(false)
     expect(statuses.some((s) => s.tag.t === 'soaked')).toBe(false)
     expect(statuses.some((s) => s.tag.t === 'frozen')).toBe(true)
     const shock = statuses.find((s) => s.tag.t === 'shocked')

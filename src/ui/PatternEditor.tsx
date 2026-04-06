@@ -1,34 +1,7 @@
 import type { PatternOffset } from '../game/types'
-import { PATTERN_GRID_RADIUS } from '../game/skills'
+import { PATTERN_GRID_RADIUS, countGridToPatternOffsets, patternOffsetsToCountGrid } from '../game/skills'
 
 const SIZE = PATTERN_GRID_RADIUS * 2 + 1
-
-function patternToGrid(pattern: PatternOffset[]): number[][] {
-  const g: number[][] = Array.from({ length: SIZE }, () => Array(SIZE).fill(0))
-  for (const o of pattern) {
-    const xi = o.dx + PATTERN_GRID_RADIUS
-    const yi = o.dy + PATTERN_GRID_RADIUS
-    if (xi >= 0 && xi < SIZE && yi >= 0 && yi < SIZE) {
-      g[yi][xi] += 1
-    }
-  }
-  return g
-}
-
-function gridToPattern(grid: number[][]): PatternOffset[] {
-  const out: PatternOffset[] = []
-  for (let yi = 0; yi < SIZE; yi++) {
-    for (let xi = 0; xi < SIZE; xi++) {
-      const n = grid[yi]![xi]!
-      const dx = xi - PATTERN_GRID_RADIUS
-      const dy = yi - PATTERN_GRID_RADIUS
-      for (let i = 0; i < n; i++) {
-        out.push({ dx, dy })
-      }
-    }
-  }
-  return out
-}
 
 export function PatternEditor({
   pattern,
@@ -42,12 +15,12 @@ export function PatternEditor({
   /** Minimal chrome for loadout surface (hides long copy). */
   compact?: boolean
 }) {
-  const grid = patternToGrid(pattern)
+  const grid = patternOffsetsToCountGrid(pattern)
 
   function setCell(xi: number, yi: number, nextCount: number): void {
     const g = grid.map((row) => [...row])
     g[yi]![xi] = Math.max(0, nextCount)
-    onChange(gridToPattern(g))
+    onChange(countGridToPatternOffsets(g))
   }
 
   function cycleCell(xi: number, yi: number): void {

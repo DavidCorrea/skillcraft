@@ -115,21 +115,32 @@
   transform: translateX(-50%);
   z-index: 50;
   pointer-events: none;
-  max-width: min(14rem, 45vw);
-  padding: 0.35rem 0.45rem;
-  font-size: 0.65rem;
-  line-height: 1.35;
-  white-space: pre-line;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  padding: 0.45rem 0.6rem;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
   text-align: left;
   color: rgba(226, 232, 240, 0.95);
   background: rgba(12, 14, 18, 0.96);
   border: 1px solid rgba(110, 184, 200, 0.35);
+  border-radius: 3px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   opacity: 0;
   visibility: hidden;
   transition:
     opacity 0.12s ease,
     visibility 0.12s ease;
+}
+
+.holo-cell__tooltip-line {
+  display: block;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .holo-cell:hover:not(:disabled) .holo-cell__tooltip,
@@ -237,6 +248,37 @@
   background: rgba(70, 75, 85, 0.26);
   box-shadow: inset 0 0 14px rgba(148, 163, 184, 0.22);
   z-index: 1;
+}
+
+/** Sudden death storm — lethal Chebyshev band outside safe radius. */
+.holo-cell--overtime-lethal {
+  background: rgba(220, 60, 50, 0.14);
+  box-shadow: inset 0 0 12px rgba(248, 113, 113, 0.22);
+  z-index: 1;
+}
+
+/** Next storm tick is skipped — lethal zone is a warning only until the following round. */
+.holo-cell--overtime-lethal--pulse {
+  animation: holo-overtime-storm-pulse 1.15s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-cell--overtime-lethal--pulse {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+@keyframes holo-overtime-storm-pulse {
+  0%,
+  100% {
+    background: rgba(220, 60, 50, 0.12);
+    box-shadow: inset 0 0 10px rgba(248, 113, 113, 0.16);
+  }
+  50% {
+    background: rgba(220, 60, 50, 0.22);
+    box-shadow: inset 0 0 16px rgba(248, 113, 113, 0.32);
+  }
 }
 
 .holo-piece {

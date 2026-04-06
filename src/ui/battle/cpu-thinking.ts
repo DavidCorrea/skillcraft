@@ -1,19 +1,19 @@
-/** Rotating lines shown in the battle log while a CPU picks an action (before heavy search). */
+/** Rotating lines while a CPU picks an action — first-person voice without leading “I …”. */
 
 const PHRASES = [
-  '{name} is figuring out their next move…',
-  '{name} weighs their options…',
-  '{name} studies the board…',
-  '{name} lines up a plan…',
-  '{name} thinks it through…',
-  '{name} sizes up the fight…',
-  '{name} plots their next step…',
-  '{name} takes a moment to decide…',
-  '{name} scans for an opening…',
-  '{name} considers their play…',
+  'Figuring the next move…',
+  'Weighing options…',
+  'Studying the board…',
+  'Lining up a plan…',
+  'Thinking it through…',
+  'Sizing up the fight…',
+  'Plotting the next step…',
+  'Need a beat to decide…',
+  'Scanning for an opening…',
+  'Considering the play…',
 ] as const
 
-export function pickCpuThinkingPhrase(actorDisplayName: string): string {
-  const t = PHRASES[Math.floor(Math.random() * PHRASES.length)]!
-  return t.replaceAll('{name}', actorDisplayName)
+/** @param _actorDisplayName reserved for future use (e.g. quoted self-name); line is implicit first person. */
+export function pickCpuThinkingPhrase(_actorDisplayName: string): string {
+  return PHRASES[Math.floor(Math.random() * PHRASES.length)]!
 }

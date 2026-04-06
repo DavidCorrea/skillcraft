@@ -18,6 +18,14 @@ import type {
   TraitPoints,
 } from './types'
 import {
+  chebyshevDistance,
+  currentOvertimeDamageAmount,
+  isOvertimeLethal,
+  rollStormActivation,
+  SHRINK_EVERY_OT_ROUNDS,
+} from './overtime'
+import type { StatusReactionMessage } from './status-reference'
+import {
   boardSizeForMatch,
   canDamageTarget,
   coordKey,
@@ -28,6 +36,11 @@ import {
 import { deriveMatchMode, normalizeBattleConfig } from './match-roster'
 
 export { normalizeBattleConfig } from './match-roster'
+export {
+  chebyshevDistance,
+  currentOvertimeDamageAmount,
+  isOvertimeLethal,
+} from './overtime'
 import {
   buildStatusForSkill,
   cellsForPattern,
@@ -38,6 +51,7 @@ import {
   manaCostForCast,
   mendHealAmount,
   patternFullyInBounds,
+  patternRespectsAoE,
   purgeCleanseCount,
 } from './skills'
 import {
@@ -162,26 +176,54 @@ function actorFromTraits(
 /** How many turn handoffs the hazard survives (each advanceTurn tick). */
 const IMPACT_DURATION_TURNS = 6
 
-export function createInitialState(config: BattleConfig): GameState {
+function shuffleActorIdsInPlace(ids: ActorId[], rnd: () => number): void {
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1))
+    const t = ids[i]!
+    ids[i] = ids[j]!
+    ids[j] = t
+  }
+}
+
+export type CreateInitialStateOptions = {
+  /**
+   * When true (default), round-robin order is shuffled so who goes first is random.
+   * When false, roster order is used (deterministic; used by tests).
+   */
+  randomizeTurnOrder?: boolean
+  /** Used only when randomizing turn order; defaults to `Math.random`. */
+  rng?: () => number
+}
+
+export function createInitialState(config: BattleConfig, options?: CreateInitialStateOptions): GameState {
   resetIdsForTests()
   const normalized = normalizeBattleConfig(config)
   const built = buildRosterFromMatchSettings(normalized.match)
-  const size = boardSizeForMatch(config.level, built.turnOrder.length, normalized.match.boardSize)
-  const spawns = spawnPositionsForActors(size, built.turnOrder, built.humanActorId)
+  const rosterTurnOrder = built.turnOrder
+  const size = boardSizeForMatch(config.level, rosterTurnOrder.length, normalized.match.boardSize)
+  const spawns = spawnPositionsForActors(size, rosterTurnOrder, built.humanActorId)
   const rowById = new Map(normalized.match.roster.map((r) => [r.actorId, r]))
   const actors: Record<ActorId, ActorState> = {}
-  for (const id of built.turnOrder) {
+  for (const id of rosterTurnOrder) {
     const pos = spawns[id]
     if (!pos) throw new Error(`No spawn for ${id}`)
     const row = rowById.get(id)
     actors[id] = actorFromTraits(id, pos, config.level, built.traitsByActor[id]!, row?.displayName)
   }
-  const turn = built.turnOrder[0]!
+  const randomize = options?.randomizeTurnOrder !== false
+  const turnOrder = [...rosterTurnOrder]
+  if (randomize) {
+    shuffleActorIdsInPlace(turnOrder, options?.rng ?? Math.random)
+  }
+  const turn = turnOrder[0]!
+  const ms = normalized.match
+  const overtimeEnabled = ms.overtimeEnabled ?? false
+  const roundsUntilOvertime = Math.max(1, ms.roundsUntilOvertime ?? 12)
   const initial: GameState = {
     size,
     actors,
     turn,
-    turnOrder: [...built.turnOrder],
+    turnOrder,
     winner: null,
     log: [],
     loadouts: built.loadouts,
@@ -191,8 +233,13 @@ export function createInitialState(config: BattleConfig): GameState {
     teamByActor: built.teamByActor,
     humanActorId: built.humanActorId,
     cpuDifficulty: built.cpuDifficulty,
+    fullRoundsCompleted: 0,
+    overtimeEnabled,
+    roundsUntilOvertime,
+    overtime: null,
+    tie: false,
   }
-  initial.log = [{ text: 'Battle start.' }, turnAnnouncement(initial, turn)]
+  initial.log = [{ text: 'Battle start.', detail: { kind: 'battle_start' } }, turnAnnouncement(initial, turn)]
   return initial
 }
 
@@ -239,7 +286,7 @@ function turnAnnouncement(state: GameState, actorId: ActorId): BattleLogEntry {
     actorId === state.humanActorId
       ? 'Your turn.'
       : `${actorLabelForLog(state, actorId)}'s turn.`
-  return { text, subject: actorId }
+  return { text, subject: actorId, detail: { kind: 'turn', actorId } }
 }
 
 /** Opponent entering a lingering tile suffers one hit of damage + status (same skill). */
@@ -292,26 +339,34 @@ function applyImpactsOnEnter(
     return { state, entries: [] }
   }
 
-  const wAfter = checkWinner(next)
-  if (wAfter) {
-    return {
-      state: { ...next, winner: wAfter },
-      entries: [
-        {
-          text: `${moverLabel} triggers residual ${def.name} for ${dmg} damage.`,
-          subject: moverId,
-        },
-        { text: `${actorLabelForLog(next, wAfter)} wins!`, subject: wAfter },
-      ],
-    }
+  const victimAfter = next.actors[moverId]!
+  const residualDetail = {
+    kind: 'residual_trigger' as const,
+    skillId: impact.skillId,
+    victimId: moverId,
+    damage: dmg,
+    victimHpAfter: victimAfter.hp,
+    victimMaxHp: victimAfter.maxHp,
+    killed: victimAfter.hp <= 0,
+  }
+
+  const damageEntry: BattleLogEntry = {
+    text: `${moverLabel} triggers residual ${def.name} for ${dmg} damage.`,
+    subject: moverId,
+    detail: residualDetail,
+  }
+  next = appendLog(next, [damageEntry])
+  next = afterHpChanges(next)
+  if (next.winner || next.tie) {
+    return { state: next, entries: [damageEntry] }
   }
 
   const tag = buildStatusForSkill(impact.skillId, impact.statusStacks, impact.casterStatusPotency)
   const afterStatus = addStatusToTarget(next, moverId, tag)
   next = afterStatus.state
   const entries: BattleLogEntry[] = [
-    { text: `${moverLabel} triggers residual ${def.name} for ${dmg} damage.`, subject: moverId },
-    ...afterStatus.messages.map((m) => ({ text: m, subject: moverId })),
+    damageEntry,
+    ...statusReactionEntries(moverId, afterStatus.messages),
   ]
   return { state: next, entries }
 }
@@ -392,25 +447,46 @@ function decayStatuses(statuses: StatusInstance[]): StatusInstance[] {
   return out
 }
 
-/** Apply DoT and duration decay at start of an actor's turn. Frozen forces skip (handled separately). */
-export function applyTurnStartHooks(actor: ActorState): ActorState {
+/** Metrics for turn-start DoT, regen, and resource refresh (for battle log). */
+export function computeTurnStartTick(actor: ActorState): {
+  actor: ActorState
+  dotDamage: number
+  regenApplied: number
+  manaGained: number
+  staminaGained: number
+} {
   const ten = actor.traits.tenacity
-  let hp = actor.hp
+  let dotDamage = 0
   for (const s of actor.statuses) {
-    if (s.tag.t === 'burning') hp -= Math.max(0, s.tag.dot - ten)
-    if (s.tag.t === 'poisoned') hp -= Math.max(0, s.tag.dot - ten)
-    if (s.tag.t === 'bleeding') hp -= Math.max(0, s.tag.dot - ten)
+    if (s.tag.t === 'burning') dotDamage += Math.max(0, s.tag.dot - ten)
+    if (s.tag.t === 'poisoned') dotDamage += Math.max(0, s.tag.dot - ten)
+    if (s.tag.t === 'bleeding') dotDamage += Math.max(0, s.tag.dot - ten)
   }
-  hp = Math.max(0, hp)
+  let hp = Math.max(0, actor.hp - dotDamage)
   let regen = actor.traits.regeneration
   if (actor.statuses.some((s) => s.tag.t === 'regenBlocked')) {
     regen = Math.floor(regen / 2)
   }
+  const hpBeforeRegen = hp
   hp = Math.min(actor.maxHp, hp + regen)
+  const regenApplied = hp - hpBeforeRegen
   const statuses = decayStatuses(actor.statuses)
+  const manaBefore = actor.mana
+  const staminaBefore = actor.stamina
   const mana = Math.min(actor.maxMana, actor.mana + actor.manaRegenPerTurn)
   const stamina = Math.min(actor.maxStamina, actor.stamina + STAMINA_REGEN_PER_TURN)
-  return { ...actor, hp, statuses, mana, stamina, tilesMovedThisTurn: 0 }
+  return {
+    actor: { ...actor, hp, statuses, mana, stamina, tilesMovedThisTurn: 0 },
+    dotDamage,
+    regenApplied,
+    manaGained: mana - manaBefore,
+    staminaGained: stamina - staminaBefore,
+  }
+}
+
+/** Apply DoT and duration decay at start of an actor's turn. Frozen forces skip (handled separately). */
+export function applyTurnStartHooks(actor: ActorState): ActorState {
+  return computeTurnStartTick(actor).actor
 }
 
 export function hasFrozen(actor: ActorState): boolean {
@@ -434,12 +510,120 @@ function appendLog(state: GameState, entries: BattleLogEntry[]): GameState {
   return { ...state, log: [...state.log, ...entries].slice(-40) }
 }
 
+function findNewlyEliminated(before: GameState, after: GameState): ActorId | null {
+  for (const id of after.turnOrder) {
+    if (before.actors[id]!.hp > 0 && after.actors[id]!.hp <= 0) return id
+  }
+  return null
+}
+
+function maybeFirstBloodEntry(before: GameState, after: GameState): BattleLogEntry | null {
+  if (after.firstBloodLogged) return null
+  const victim = findNewlyEliminated(before, after)
+  if (!victim) return null
+  return {
+    text: `First blood — ${actorLabelForLog(after, victim)} is eliminated!`,
+    subject: victim,
+    detail: { kind: 'battle_milestone', milestone: 'first_blood', victimId: victim },
+    classicVisible: false,
+  }
+}
+
+function appendLogWithFirstBlood(before: GameState, after: GameState, entries: BattleLogEntry[]): GameState {
+  let next = appendLog(after, entries)
+  const fb = maybeFirstBloodEntry(before, after)
+  if (fb && !after.firstBloodLogged) {
+    next = appendLog({ ...next, firstBloodLogged: true }, [fb])
+  }
+  return next
+}
+
+function turnTickResourceEntries(
+  game: GameState,
+  actorId: ActorId,
+  tick: ReturnType<typeof computeTurnStartTick>,
+): BattleLogEntry[] {
+  const entries: BattleLogEntry[] = []
+  if (tick.dotDamage > 0 || tick.regenApplied > 0) {
+    const label = actorLabelForLog(game, actorId)
+    const text =
+      tick.dotDamage > 0 && tick.regenApplied > 0
+        ? `${label} takes ${tick.dotDamage} from DoTs and heals ${tick.regenApplied} from regeneration.`
+        : tick.dotDamage > 0
+          ? `${label} takes ${tick.dotDamage} from DoTs.`
+          : `${label} heals ${tick.regenApplied} from regeneration.`
+    entries.push({
+      text,
+      subject: actorId,
+      detail: {
+        kind: 'turn_tick',
+        actorId,
+        ...(tick.dotDamage > 0 ? { dotDamage: tick.dotDamage } : {}),
+        ...(tick.regenApplied > 0 ? { regen: tick.regenApplied } : {}),
+      },
+    })
+  }
+  if (tick.manaGained > 0 || tick.staminaGained > 0) {
+    entries.push({
+      text: `${actorLabelForLog(game, actorId)} gains ${tick.manaGained} mana and ${tick.staminaGained} stamina.`,
+      subject: actorId,
+      detail: {
+        kind: 'resource_tick',
+        actorId,
+        manaGained: tick.manaGained,
+        staminaGained: tick.staminaGained,
+      },
+      classicVisible: false,
+    })
+  }
+  return entries
+}
+
+function statusReactionEntries(targetId: ActorId, messages: StatusReactionMessage[]): BattleLogEntry[] {
+  return messages.map((m) => ({
+    text: m.text,
+    subject: targetId,
+    detail: { kind: 'status_reaction', reactionKey: m.key, targetId },
+  }))
+}
+
+/** Enemies who could be targeted but took no damage from this spell (broadcast relief). */
+function spellFocusRelievedIds(
+  state: GameState,
+  actor: ActorId,
+  hitList: { targetId: ActorId }[],
+): ActorId[] {
+  if (hitList.length === 0) return []
+  const hitIds = new Set(hitList.map((h) => h.targetId))
+  return state.turnOrder.filter((id) => {
+    if (id === actor) return false
+    const t = state.actors[id]
+    if (!t || t.hp <= 0) return false
+    if (!canDamageTarget(state.matchMode, state.friendlyFire, state.teamByActor, actor, id)) return false
+    if (hitIds.has(id)) return false
+    if (id === state.humanActorId) return false
+    return true
+  })
+}
+
 function winnerLog(state: GameState, w: ActorId): BattleLogEntry {
-  return { text: `${actorLabelForLog(state, w)} wins!`, subject: w }
+  const a = state.actors[w]!
+  return {
+    text: `${actorLabelForLog(state, w)} wins!`,
+    subject: w,
+    detail: {
+      kind: 'win',
+      winnerId: w,
+      winnerHpAfter: a.hp,
+      winnerMaxHp: a.maxHp,
+    },
+  }
 }
 
 function checkWinner(state: GameState): ActorId | null {
+  if (state.tie) return null
   const alive = state.turnOrder.filter((id) => state.actors[id]!.hp > 0)
+  if (alive.length === 0) return null
   if (state.matchMode === 'ffa') {
     if (alive.length === 1) return alive[0]!
     return null
@@ -525,6 +709,168 @@ function applyHpLoss(state: GameState, targetId: ActorId, amount: number): GameS
   return withActor(state, targetId, { ...actor, hp, statuses })
 }
 
+function firstAliveInTurnOrder(state: GameState): ActorId | null {
+  for (const id of state.turnOrder) {
+    if (state.actors[id]!.hp > 0) return id
+  }
+  return null
+}
+
+function isRoundComplete(state: GameState, nextTurn: ActorId): boolean {
+  const first = firstAliveInTurnOrder(state)
+  return first !== null && nextTurn === first
+}
+
+function finalizeEliminations(state: GameState): GameState {
+  const alive = state.turnOrder.filter((id) => state.actors[id]!.hp > 0)
+  if (alive.length > 0 || state.tie) return state
+  return {
+    ...appendLog(state, [{ text: 'Everyone is down — tie game.', detail: { kind: 'tie' } }]),
+    tie: true,
+    winner: null,
+  }
+}
+
+/** After any HP change: mass elimination → tie; else single winner if applicable. */
+function afterHpChanges(state: GameState): GameState {
+  const s = finalizeEliminations(state)
+  if (s.tie || s.winner) return s
+  const w = checkWinner(s)
+  if (!w) return s
+  return { ...appendLog(s, [winnerLog(s, w)]), winner: w }
+}
+
+type StormReason = 'periodic' | 'engulf'
+
+function applyStormDamageBatch(
+  state: GameState,
+  shouldHit: (id: ActorId) => boolean,
+  amount: number,
+  reason: StormReason,
+): GameState {
+  let s = state
+  for (const id of state.turnOrder) {
+    const a = s.actors[id]
+    if (!a || a.hp <= 0) continue
+    if (!shouldHit(id)) continue
+    s = applyHpLoss(s, id, amount)
+    s = appendLog(s, [
+      {
+        text: `${actorLabelForLog(s, id)} takes ${amount} from the storm.`,
+        subject: id,
+        detail: { kind: 'overtime_storm', victimId: id, damage: amount, reason },
+      },
+    ])
+  }
+  return s
+}
+
+function activateOvertime(state: GameState): GameState {
+  const ot = rollStormActivation(state.size, Math.random)
+  /** First full round after activation is preview only; first damage tick is the following boundary. */
+  let s: GameState = { ...state, overtime: { ...ot, stormSkipsNextBoundary: true } }
+  s = appendLog(s, [
+    {
+      text: 'Sudden death — the kill zone is marked. The storm strikes on alternate full rounds.',
+      detail: { kind: 'overtime_begin' },
+    },
+  ])
+  return s
+}
+
+function applyOvertimePeriodicStorm(state: GameState): GameState {
+  const ot = state.overtime!
+  const amt = currentOvertimeDamageAmount(ot)
+  return applyStormDamageBatch(
+    state,
+    (id) => isOvertimeLethal(state, state.actors[id]!.pos),
+    amt,
+    'periodic',
+  )
+}
+
+function applyOvertimeShrink(state: GameState): GameState {
+  const ot = state.overtime!
+  const oldR = ot.safeRadius
+  const newSafe = oldR - 1
+  const newStep = ot.damageStep + 1
+  let s: GameState = {
+    ...state,
+    overtime: { ...ot, safeRadius: newSafe, damageStep: newStep },
+  }
+  const amt = currentOvertimeDamageAmount(s.overtime!)
+  s = appendLog(s, [
+    {
+      text: `The safe zone shrinks (${newSafe} tiles from storm center).`,
+      detail: { kind: 'overtime_shrink', safeRadiusAfter: newSafe },
+    },
+  ])
+  s = applyStormDamageBatch(
+    s,
+    (id) => {
+      const pos = s.actors[id]!.pos
+      return chebyshevDistance(pos, s.overtime!.stormCenter) === oldR
+    },
+    amt,
+    'engulf',
+  )
+  s = applyStormDamageBatch(
+    s,
+    (id) => {
+      const pos = s.actors[id]!.pos
+      return chebyshevDistance(pos, s.overtime!.stormCenter) > oldR
+    },
+    amt,
+    'periodic',
+  )
+  return s
+}
+
+function processFullRoundBoundary(state: GameState): GameState {
+  let s: GameState = { ...state, fullRoundsCompleted: state.fullRoundsCompleted + 1 }
+  if (!s.overtimeEnabled) return s
+
+  if (!s.overtime) {
+    if (s.fullRoundsCompleted >= s.roundsUntilOvertime) {
+      s = activateOvertime(s)
+      return finalizeEliminations(s)
+    }
+    return s
+  }
+
+  const prevOt = s.overtime!
+  s = {
+    ...s,
+    overtime: { ...prevOt, otRoundsCompleted: prevOt.otRoundsCompleted + 1 },
+  }
+  const ot = s.overtime!
+  if (ot.stormSkipsNextBoundary) {
+    const wouldShrink = ot.otRoundsCompleted > 0 && ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
+    s = {
+      ...s,
+      overtime: {
+        ...ot,
+        stormSkipsNextBoundary: false,
+        deferredShrink: ot.deferredShrink || wouldShrink,
+      },
+    }
+    return finalizeEliminations(s)
+  }
+
+  const wouldShrink = ot.otRoundsCompleted > 0 && ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
+  const doShrink = ot.deferredShrink || wouldShrink
+  if (doShrink) {
+    s = applyOvertimeShrink(s)
+  } else {
+    s = applyOvertimePeriodicStorm(s)
+  }
+  s = {
+    ...s,
+    overtime: { ...s.overtime!, deferredShrink: false, stormSkipsNextBoundary: true },
+  }
+  return finalizeEliminations(s)
+}
+
 /** Physical Strike: duel, fortitude, physical armor (raw damage before this). */
 function applyDamageFromAttacker(
   state: GameState,
@@ -560,28 +906,28 @@ function applyKnockbackFromStrike(
   state: GameState,
   strikerId: ActorId,
   enemyId: ActorId,
-): { state: GameState; hazardEntries: BattleLogEntry[] } {
+): { state: GameState; hazardEntries: BattleLogEntry[]; knockedBack: boolean } {
   const striker = state.actors[strikerId]
-  if (striker.traits.strikeKnockback < 1) return { state, hazardEntries: [] }
+  if (striker.traits.strikeKnockback < 1) return { state, hazardEntries: [], knockedBack: false }
   const enemy = state.actors[enemyId]
-  if (enemy.hp <= 0) return { state, hazardEntries: [] }
+  if (enemy.hp <= 0) return { state, hazardEntries: [], knockedBack: false }
   const dx = Math.sign(enemy.pos.x - striker.pos.x)
   const dy = Math.sign(enemy.pos.y - striker.pos.y)
   const np = { x: enemy.pos.x + dx, y: enemy.pos.y + dy }
   const sz = state.size
-  if (np.x < 0 || np.x >= sz || np.y < 0 || np.y >= sz) return { state, hazardEntries: [] }
-  if (actorAt(state, np) !== null) return { state, hazardEntries: [] }
+  if (np.x < 0 || np.x >= sz || np.y < 0 || np.y >= sz) return { state, hazardEntries: [], knockedBack: false }
+  if (actorAt(state, np) !== null) return { state, hazardEntries: [], knockedBack: false }
   let next = withActor(state, enemyId, { ...enemy, pos: np })
   const enter = applyImpactsOnEnter(next, enemyId, np)
   next = enter.state
-  return { state: next, hazardEntries: enter.entries }
+  return { state: next, hazardEntries: enter.entries, knockedBack: true }
 }
 
 function addStatusToTarget(
   state: GameState,
   targetId: ActorId,
   tag: StatusTag,
-): { state: GameState; messages: string[] } {
+): { state: GameState; messages: StatusReactionMessage[] } {
   const target = state.actors[targetId]
   const incoming: StatusInstance = { id: nextStatusId(), tag: cloneTag(tag) }
   const { statuses, messages, immediateDamage } = resolveStatusesAfterAdd(
@@ -623,7 +969,7 @@ export function hasRooted(actor: ActorState): boolean {
 }
 
 export function legalStrikeTargets(state: GameState, actor: ActorId): ActorId[] {
-  if (state.winner || state.turn !== actor) return []
+  if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
   if (me.stamina < STAMINA_STRIKE_COST) return []
@@ -660,7 +1006,7 @@ export function applyAction(
   actor: ActorId,
   action: GameAction,
 ): { state: GameState; error?: string } {
-  if (state.winner) return { state, error: 'Game is over.' }
+  if (state.winner || state.tie) return { state, error: 'Game is over.' }
   if (state.turn !== actor) return { state, error: 'Not your turn.' }
 
   let me = state.actors[actor]
@@ -669,6 +1015,7 @@ export function applyAction(
   }
 
   if (action.type === 'move') {
+    const snapshotBefore = state
     if (hasRooted(me)) {
       return { state, error: 'Rooted — you cannot move.' }
     }
@@ -698,21 +1045,23 @@ export function applyAction(
     let next = withActor(state, actor, me)
     const enter = applyImpactsOnEnter(next, actor, to)
     next = enter.state
-    const moveEntries: BattleLogEntry[] = [
-      { text: `${actorLabelForLog(next, actor)} moves.`, subject: actor },
-      ...enter.entries,
-    ]
-    const wMove = checkWinner(next)
-    if (wMove) {
-      next = appendLog(next, moveEntries)
-      return { state: { ...next, winner: wMove } }
+    const moveLine: BattleLogEntry = {
+      text: `${actorLabelForLog(next, actor)} moves.`,
+      subject: actor,
+      detail: { kind: 'move', actorId: actor },
     }
-    next = appendLog(next, moveEntries)
+    if (next.winner || next.tie) {
+      next = appendLogWithFirstBlood(snapshotBefore, next, [moveLine])
+      return { state: next }
+    }
+    const moveEntries: BattleLogEntry[] = [moveLine, ...enter.entries]
+    next = appendLogWithFirstBlood(snapshotBefore, next, moveEntries)
     next = advanceTurn(next, actor)
     return { state: next }
   }
 
   if (action.type === 'strike') {
+    const snapshotBefore = state
     if (me.stamina < STAMINA_STRIKE_COST) {
       return { state, error: 'Not enough stamina to strike.' }
     }
@@ -729,6 +1078,7 @@ export function applyAction(
     } else if (!legal.includes(enemyId)) {
       return { state, error: 'Invalid strike target.' }
     }
+    const relievedIds = legal.filter((id) => id !== enemyId && id !== state.humanActorId)
     const enemy = state.actors[enemyId]!
     const rawDmg = totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.strikeStreak)
     const dmgDealt = Math.max(
@@ -752,14 +1102,48 @@ export function applyAction(
     next = kb.state
 
     const strikerLabel = actorLabelForLog(next, actor)
-    const wAfterHit = checkWinner(next)
-    if (wAfterHit) {
-      next = appendLog(next, [
-        { text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`, subject: actor },
-        ...kb.hazardEntries,
-        winnerLog(next, wAfterHit),
-      ])
-      return { state: { ...next, winner: wAfterHit } }
+    next = afterHpChanges(next)
+    const strikeTargetAfter = next.actors[enemyId]!
+    const strikeDetail = {
+      kind: 'strike' as const,
+      actorId: actor,
+      targetId: enemyId,
+      damage: dmgDealt,
+      targetHpAfter: strikeTargetAfter.hp,
+      targetMaxHp: strikeTargetAfter.maxHp,
+      killed: strikeTargetAfter.hp <= 0,
+    }
+    if (next.winner || next.tie) {
+      const strikeWinEntries: BattleLogEntry[] = [
+        {
+          text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`,
+          subject: actor,
+          detail: strikeDetail,
+        },
+      ]
+      if (kb.knockedBack) {
+        strikeWinEntries.push({
+          text: `${strikerLabel} knocks ${actorLabelForLog(next, enemyId)} back.`,
+          subject: actor,
+          detail: { kind: 'knockback', attackerId: actor, targetId: enemyId },
+        })
+      }
+      strikeWinEntries.push(...kb.hazardEntries)
+      if (relievedIds.length > 0) {
+        strikeWinEntries.push({
+          text: '',
+          classicVisible: false,
+          detail: {
+            kind: 'cpu_situational',
+            flavor: 'relief_not_melee_chosen',
+            attackerId: actor,
+            focusTargetId: enemyId,
+            relievedIds,
+          },
+        })
+      }
+      next = appendLogWithFirstBlood(snapshotBefore, next, strikeWinEntries)
+      return { state: next }
     }
 
     const strikerTraits = next.actors[actor].traits
@@ -767,30 +1151,55 @@ export function applyAction(
     const afterBleed = addStatusToTarget(next, enemyId, bleedTag)
     next = afterBleed.state
     let strikeEntries: BattleLogEntry[] = [
-      { text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`, subject: actor },
-      ...afterBleed.messages.map((m) => ({ text: m, subject: enemyId })),
+      {
+        text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`,
+        subject: actor,
+        detail: strikeDetail,
+      },
     ]
+    if (kb.knockedBack) {
+      strikeEntries.push({
+        text: `${strikerLabel} knocks ${actorLabelForLog(next, enemyId)} back.`,
+        subject: actor,
+        detail: { kind: 'knockback', attackerId: actor, targetId: enemyId },
+      })
+    }
+    strikeEntries = [...strikeEntries, ...statusReactionEntries(enemyId, afterBleed.messages)]
     if (kb.hazardEntries.length > 0) strikeEntries = [...strikeEntries, ...kb.hazardEntries]
 
     if (strikerTraits.strikeSlow >= 1) {
       const slowTag = buildSlowTag(strikerTraits.strikeSlow)
       const afterSlow = addStatusToTarget(next, enemyId, slowTag)
       next = afterSlow.state
-      strikeEntries = [
-        ...strikeEntries,
-        ...afterSlow.messages.map((m) => ({ text: m, subject: enemyId })),
-      ]
+      strikeEntries = [...strikeEntries, ...statusReactionEntries(enemyId, afterSlow.messages)]
     }
 
     if (heal > 0) {
-      strikeEntries.push({ text: `${strikerLabel} heals ${heal} from lifesteal.`, subject: actor })
+      strikeEntries.push({
+        text: `${strikerLabel} heals ${heal} from lifesteal.`,
+        subject: actor,
+        detail: { kind: 'lifesteal', actorId: actor, amount: heal },
+      })
     }
 
-    next = appendLog(next, strikeEntries)
+    if (relievedIds.length > 0) {
+      strikeEntries.push({
+        text: '',
+        classicVisible: false,
+        detail: {
+          kind: 'cpu_situational',
+          flavor: 'relief_not_melee_chosen',
+          attackerId: actor,
+          focusTargetId: enemyId,
+          relievedIds,
+        },
+      })
+    }
 
-    const w = checkWinner(next)
-    if (w) {
-      next = { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+    next = appendLogWithFirstBlood(snapshotBefore, next, strikeEntries)
+
+    next = afterHpChanges(next)
+    if (next.winner || next.tie) {
       return { state: next }
     }
 
@@ -800,7 +1209,9 @@ export function applyAction(
 
   if (action.type === 'skip') {
     const label = actorLabelForLog(state, actor)
-    let next = appendLog(state, [{ text: `${label} skips.`, subject: actor }])
+    let next = appendLog(state, [
+      { text: `${label} skips.`, subject: actor, detail: { kind: 'skip', actorId: actor } },
+    ])
     next = advanceTurn(next, actor)
     return { state: next }
   }
@@ -828,9 +1239,14 @@ export function applyAction(
     return { state, error: 'Pattern would leave the board from this target.' }
   }
 
+  if (!patternRespectsAoE(entry.pattern, def, entry)) {
+    return { state, error: 'Pattern exceeds AoE for this skill.' }
+  }
+
   const dmgKind = def.damageKind ?? 'elemental'
 
   if (def.selfTarget) {
+    const snapshotBefore = state
     if (coordKey(target) !== coordKey(me.pos)) {
       return { state, error: 'Self skills must target your own cell.' }
     }
@@ -844,8 +1260,18 @@ export function applyAction(
       const healed = next.actors[actor]
       const hp = Math.min(healed.maxHp, healed.hp + heal)
       next = withActor(next, actor, { ...healed, hp })
-      next = appendLog(next, [
-        { text: `${casterLabel} casts ${def.name} for +${heal} HP (${manaCost} mana).`, subject: actor },
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text: `${casterLabel} casts ${def.name} for +${heal} HP (${manaCost} mana).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_self_heal',
+            skillId: action.skillId,
+            actorId: actor,
+            heal,
+            manaCost,
+          },
+        },
       ])
     } else if (action.skillId === 'ward') {
       const tag = buildStatusForSkill('ward', entry.statusStacks, potency)
@@ -863,28 +1289,42 @@ export function applyAction(
       next = withActor(next, actor, { ...cur, statuses: stripped })
       const after = addStatusToTarget(next, actor, finalTag)
       next = after.state
-      next = appendLog(next, [
-        { text: `${casterLabel} casts ${def.name} (${manaCost} mana).`, subject: actor },
-        ...after.messages.map((m) => ({ text: m, subject: actor })),
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text: `${casterLabel} casts ${def.name} (${manaCost} mana).`,
+          subject: actor,
+          detail: { kind: 'cast_self_ward', skillId: action.skillId, actorId: actor, manaCost },
+        },
+        ...statusReactionEntries(actor, after.messages),
       ])
     } else if (action.skillId === 'purge') {
       const n = purgeCleanseCount(entry.statusStacks)
       const purged = purgeDebuffs(next.actors[actor], n)
       next = withActor(next, actor, purged)
-      next = appendLog(next, [
-        { text: `${casterLabel} casts ${def.name}, cleanses ${n} (${manaCost} mana).`, subject: actor },
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text: `${casterLabel} casts ${def.name}, cleanses ${n} (${manaCost} mana).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_self_purge',
+            skillId: action.skillId,
+            actorId: actor,
+            cleanseCount: n,
+            manaCost,
+          },
+        },
       ])
     }
 
-    const w = checkWinner(next)
-    if (w) {
-      next = { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+    next = afterHpChanges(next)
+    if (next.winner || next.tie) {
       return { state: next }
     }
     next = advanceTurn(next, actor)
     return { state: next }
   }
 
+  const snapshotOffense = state
   const hitList = gatherOffensiveHits(state, actor, target, entry.pattern)
   const totalHits = hitList.reduce((s, h) => s + h.hits, 0)
 
@@ -894,15 +1334,15 @@ export function applyAction(
 
   if (totalHits === 0) {
     next = layImpacts(next, target, entry, actor, potency)
-    next = appendLog(next, [
+    next = appendLogWithFirstBlood(snapshotOffense, next, [
       {
         text: `${actorLabelForLog(next, actor)} casts ${def.name} — residual energy lingers on the tiles (${manaCost} mana).`,
         subject: actor,
+        detail: { kind: 'cast_linger', skillId: action.skillId, actorId: actor, manaCost },
       },
     ])
-    const w = checkWinner(next)
-    if (w) {
-      next = { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+    next = afterHpChanges(next)
+    if (next.winner || next.tie) {
       return { state: next }
     }
     next = advanceTurn(next, actor)
@@ -941,16 +1381,51 @@ export function applyAction(
 
   next = layImpacts(next, target, entry, actor, potency)
 
-  const wAfterHit = checkWinner(next)
-  if (wAfterHit) {
-    next = appendLog(next, [
-      {
-        text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${manaCost} mana).`,
-        subject: actor,
+  const hitSnapshots = hitList.map(({ targetId }) => {
+    const a = next.actors[targetId]!
+    return { targetId, hpAfter: a.hp, maxHp: a.maxHp }
+  })
+  const spellRelievedIds = spellFocusRelievedIds(state, actor, hitList)
+  const castDamageDetail = {
+    kind: 'cast_damage' as const,
+    skillId: action.skillId,
+    actorId: actor,
+    totalDamage: sumDmg,
+    manaCost,
+    targetCount: hitList.length,
+    hitSnapshots,
+  }
+
+  const winCastEntries: BattleLogEntry[] = [
+    {
+      text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${manaCost} mana).`,
+      subject: actor,
+      detail: castDamageDetail,
+    },
+  ]
+  if (spellRelievedIds.length > 0) {
+    winCastEntries.push({
+      text: '',
+      classicVisible: false,
+      detail: {
+        kind: 'cpu_situational',
+        flavor: 'relief_not_spell_focus',
+        attackerId: actor,
+        focusTargetId: hitList[0]!.targetId,
+        relievedIds: spellRelievedIds,
       },
-      winnerLog(next, wAfterHit),
-    ])
-    return { state: { ...next, winner: wAfterHit } }
+    })
+  }
+
+  next = finalizeEliminations(next)
+  if (next.tie) {
+    return { state: appendLogWithFirstBlood(snapshotOffense, next, winCastEntries) }
+  }
+  const winFromCast = checkWinner(next)
+  if (winFromCast) {
+    next = appendLogWithFirstBlood(snapshotOffense, next, winCastEntries)
+    next = appendLog(next, [winnerLog(next, winFromCast)])
+    return { state: { ...next, winner: winFromCast } }
   }
 
   const tag = buildStatusForSkill(action.skillId, entry.statusStacks, me.traits.statusPotency)
@@ -958,21 +1433,31 @@ export function applyAction(
     {
       text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${manaCost} mana).`,
       subject: actor,
+      detail: castDamageDetail,
     },
   ]
   for (const { targetId } of hitList) {
     const afterStatus = addStatusToTarget(next, targetId, tag)
     next = afterStatus.state
-    castEntries = [
-      ...castEntries,
-      ...afterStatus.messages.map((m) => ({ text: m, subject: targetId })),
-    ]
+    castEntries = [...castEntries, ...statusReactionEntries(targetId, afterStatus.messages)]
   }
-  next = appendLog(next, castEntries)
+  if (spellRelievedIds.length > 0) {
+    castEntries.push({
+      text: '',
+      classicVisible: false,
+      detail: {
+        kind: 'cpu_situational',
+        flavor: 'relief_not_spell_focus',
+        attackerId: actor,
+        focusTargetId: hitList[0]!.targetId,
+        relievedIds: spellRelievedIds,
+      },
+    })
+  }
+  next = appendLogWithFirstBlood(snapshotOffense, next, castEntries)
 
-  const w = checkWinner(next)
-  if (w) {
-    next = { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+  next = afterHpChanges(next)
+  if (next.winner || next.tie) {
     return { state: next }
   }
 
@@ -992,34 +1477,54 @@ function nextAliveAfter(state: GameState, finished: ActorId): ActorId {
 /** After a successful action, pass turn to the next living actor and run their turn-start hooks. */
 function advanceTurn(state: GameState, finished: ActorId): GameState {
   const nextTurn = nextAliveAfter(state, finished)
+  const roundComplete = isRoundComplete(state, nextTurn)
   let next = decayImpacts({ ...state, turn: nextTurn })
+  const beforeRoundBoundary = next
+  if (roundComplete) {
+    next = processFullRoundBoundary(next)
+    if (next.tie) {
+      return appendLogWithFirstBlood(beforeRoundBoundary, next, [])
+    }
+    next = afterHpChanges(next)
+    if (next.winner || next.tie) {
+      return appendLogWithFirstBlood(beforeRoundBoundary, next, [])
+    }
+  }
+  const beforeHooks = next
   let actor = next.actors[nextTurn]!
-  actor = applyTurnStartHooks(actor)
+  const tick = computeTurnStartTick(actor)
+  actor = tick.actor
   next = withActor(next, nextTurn, actor)
 
-  const w = checkWinner(next)
-  if (w) {
-    return { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+  const tickEntries = turnTickResourceEntries(next, nextTurn, tick)
+
+  let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
+  result = afterHpChanges(result)
+  if (result.winner || result.tie) {
+    return result
   }
 
   if (hasFrozen(actor)) {
     const unfrozen = consumeFrozen(actor)
     next = withActor(next, nextTurn, unfrozen)
-    next = appendLog(next, [
+    let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
+    result = appendLog(result, [
       {
-        text: `${actorLabelForLog(next, nextTurn)} is frozen and skips a turn.`,
+        text: `${actorLabelForLog(result, nextTurn)} is frozen and skips a turn.`,
         subject: nextTurn,
+        detail: { kind: 'frozen_skip', actorId: nextTurn },
       },
     ])
-    return advanceTurn(next, nextTurn)
+    return advanceTurn(result, nextTurn)
   }
 
+  next = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
   next = appendLog(next, [turnAnnouncement(next, nextTurn)])
   return next
 }
 
 export function legalMoves(state: GameState, actor: ActorId): Coord[] {
-  if (state.winner || state.turn !== actor) return []
+  if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
   if (hasRooted(me)) return []
@@ -1031,7 +1536,7 @@ export function legalMoves(state: GameState, actor: ActorId): Coord[] {
 }
 
 export function legalCasts(state: GameState, actor: ActorId): { skillId: SkillId; target: Coord }[] {
-  if (state.winner || state.turn !== actor) return []
+  if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
   if (hasSilenced(me)) return []
@@ -1039,6 +1544,7 @@ export function legalCasts(state: GameState, actor: ActorId): { skillId: SkillId
 
   for (const entry of state.loadouts[actor]) {
     const def = getSkillDef(entry.skillId)
+    if (!patternRespectsAoE(entry.pattern, def, entry)) continue
     const maxRange = effectiveCastRangeForLoadout(def, entry, me.traits)
 
     if (def.selfTarget) {
@@ -1068,13 +1574,14 @@ export function legalCasts(state: GameState, actor: ActorId): { skillId: SkillId
  * Includes targets that do not overlap the enemy — use with {@link legalCasts} for full vs miss highlights.
  */
 export function castReachableAnchors(state: GameState, actor: ActorId, skillId: SkillId): Coord[] {
-  if (state.winner || state.turn !== actor) return []
+  if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
   if (hasSilenced(me)) return []
   const entry = loadoutEntry(actor, skillId, state)
   if (!entry) return []
   const def = getSkillDef(skillId)
+  if (!patternRespectsAoE(entry.pattern, def, entry)) return []
   const maxRange = effectiveCastRangeForLoadout(def, entry, me.traits)
   const out: Coord[] = []
   if (def.selfTarget) {
@@ -1116,7 +1623,7 @@ export function allLegalActions(state: GameState, actor: ActorId): GameAction[] 
     target: c.target,
   }))
   const base = [...moves, ...strikes, ...casts]
-  if (state.winner || state.turn !== actor) return base
+  if (state.winner || state.tie || state.turn !== actor) return base
   const me = state.actors[actor]
   if (!me || hasFrozen(me)) return base
   return [...base, { type: 'skip' as const }]
@@ -1125,21 +1632,29 @@ export function allLegalActions(state: GameState, actor: ActorId): GameAction[] 
 /** Run turn-start hooks when it becomes someone's turn (e.g. after loading a saved battle). */
 export function applyTurnEntry(state: GameState): GameState {
   const actorId = state.turn
-  let actor = state.actors[actorId]
-  actor = applyTurnStartHooks(actor)
+  const beforeHooks = state
+  let actor = state.actors[actorId]!
+  const tick = computeTurnStartTick(actor)
+  actor = tick.actor
   let next = withActor(state, actorId, actor)
-  const w = checkWinner(next)
-  if (w) return { ...next, winner: w, log: [...next.log, winnerLog(next, w)] }
+  const tickEntries = turnTickResourceEntries(next, actorId, tick)
+  let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
+  result = afterHpChanges(result)
+  if (result.winner || result.tie) {
+    return result
+  }
   if (hasFrozen(actor)) {
     const unfrozen = consumeFrozen(actor)
     next = withActor(next, actorId, unfrozen)
-    next = appendLog(next, [
+    let frozenSkip = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
+    frozenSkip = appendLog(frozenSkip, [
       {
-        text: `${actorLabelForLog(next, actorId)} is frozen and skips a turn.`,
+        text: `${actorLabelForLog(frozenSkip, actorId)} is frozen and skips a turn.`,
         subject: actorId,
+        detail: { kind: 'frozen_skip', actorId },
       },
     ])
-    return advanceTurn(next, actorId)
+    return advanceTurn(frozenSkip, actorId)
   }
-  return next
+  return result
 }

@@ -28,13 +28,13 @@ describe('castResolveStaggerMap', () => {
 describe('knockbackMoveFx', () => {
   it('returns null when defender position unchanged', () => {
     resetIdsForTests()
-    const s = createInitialState(miniConfig)
+    const s = createInitialState(miniConfig, { randomizeTurnOrder: false })
     expect(knockbackMoveFx(s, s, TID.human, TID.cpu)).toBeNull()
   })
 
   it('returns move fx for defender when position changes', () => {
     resetIdsForTests()
-    const prev = createInitialState(miniConfig)
+    const prev = createInitialState(miniConfig, { randomizeTurnOrder: false })
     const next = {
       ...prev,
       actors: {

@@ -235,7 +235,11 @@ export function HolographicBattleBoard({
             >
               {tooltip !== null ? (
                 <span className="holo-cell__tooltip" aria-hidden>
-                  {tooltip}
+                  {tooltip.split('\n').map((line, i) => (
+                    <span key={i} className="holo-cell__tooltip-line">
+                      {line}
+                    </span>
+                  ))}
                 </span>
               ) : null}
               {here.map((p) => {

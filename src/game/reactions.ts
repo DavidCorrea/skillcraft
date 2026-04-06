@@ -1,5 +1,5 @@
 import type { StatusInstance, StatusTag } from './types'
-import { MARK_EXTRA_CAP, reactionMessages, VULN_CAP } from './status-reference'
+import { MARK_EXTRA_CAP, reactionMessages, type StatusReactionMessage, VULN_CAP } from './status-reference'
 
 const OVERLOAD_DAMAGE_CAP = 15
 const COAGULATE_DAMAGE_CAP = 12
@@ -360,9 +360,9 @@ export function resolveStatusesAfterAdd(
   before: StatusInstance[],
   incoming: StatusInstance,
   nextId: () => string,
-): { statuses: StatusInstance[]; messages: string[]; immediateDamage?: number } {
+): { statuses: StatusInstance[]; messages: StatusReactionMessage[]; immediateDamage?: number } {
   let statuses = [...before, incoming]
-  const messages: string[] = []
+  const messages: StatusReactionMessage[] = []
   let immediateDamage = 0
 
   const assignIds = (list: StatusInstance[]): StatusInstance[] =>
@@ -372,13 +372,13 @@ export function resolveStatusesAfterAdd(
     const melt = applyMelt(statuses)
     if (melt) {
       statuses = melt
-      messages.push(reactionMessages.melt)
+      messages.push({ text: reactionMessages.melt, key: 'melt' })
       continue
     }
     const evap = applyEvaporate(statuses)
     if (evap) {
       statuses = evap
-      messages.push(reactionMessages.evaporate)
+      messages.push({ text: reactionMessages.evaporate, key: 'evaporate' })
       continue
     }
     break
@@ -388,121 +388,121 @@ export function resolveStatusesAfterAdd(
   if (det.damage > 0) {
     statuses = det.list
     immediateDamage += det.damage
-    if (det.message) messages.push(det.message)
+    if (det.message) messages.push({ text: det.message, key: 'detonate' })
   }
 
   const ov = applyOverload(statuses)
   if (ov.damage > 0) {
     statuses = ov.list
     immediateDamage += ov.damage
-    if (ov.message) messages.push(ov.message)
+    if (ov.message) messages.push({ text: ov.message, key: 'overload' })
   }
 
   const caut = applyCauterize(statuses)
   if (caut) {
     statuses = caut
-    messages.push(reactionMessages.cauterize)
+    messages.push({ text: reactionMessages.cauterize, key: 'cauterize' })
   }
 
   const coag = applyCoagulate(statuses)
   if (coag.damage > 0) {
     statuses = coag.list
     immediateDamage += coag.damage
-    if (coag.message) messages.push(coag.message)
+    if (coag.message) messages.push({ text: coag.message, key: 'coagulate' })
   }
 
   const wf = applyWildfire(statuses)
   if (wf) {
     statuses = wf
-    messages.push(reactionMessages.wildfire)
+    messages.push({ text: reactionMessages.wildfire, key: 'wildfire' })
   }
 
   const par = applyParch(statuses)
   if (par) {
     statuses = par
-    messages.push(reactionMessages.parch)
+    messages.push({ text: reactionMessages.parch, key: 'parch' })
   }
 
   const mw = applyMeltWard(statuses)
   if (mw) {
     statuses = mw
-    messages.push(reactionMessages.meltWard)
+    messages.push({ text: reactionMessages.meltWard, key: 'meltWard' })
   }
 
   const ff = applyFlashFreeze(statuses)
   if (ff) {
     statuses = assignIds(ff)
-    messages.push(reactionMessages.flashFreeze)
+    messages.push({ text: reactionMessages.flashFreeze, key: 'flashFreeze' })
   }
 
   const mud = applyMud(statuses)
   if (mud) {
     statuses = assignIds(mud)
-    messages.push(reactionMessages.mud)
+    messages.push({ text: reactionMessages.mud, key: 'mud' })
   }
 
   const wl = applyWaterlogged(statuses)
   if (wl) {
     statuses = wl
-    messages.push(reactionMessages.waterlogged)
+    messages.push({ text: reactionMessages.waterlogged, key: 'waterlogged' })
   }
 
   const sh = applyStranglehold(statuses)
   if (sh) {
     statuses = sh
-    messages.push(reactionMessages.stranglehold)
+    messages.push({ text: reactionMessages.stranglehold, key: 'stranglehold' })
   }
 
   const gr = applyGrounded(statuses)
   statuses = gr.list
-  if (gr.message) messages.push(gr.message)
+  if (gr.message) messages.push({ text: gr.message, key: 'grounded' })
 
   const cry = applyCrystallize(statuses)
   if (cry) {
     statuses = cry
-    messages.push(reactionMessages.crystallize)
+    messages.push({ text: reactionMessages.crystallize, key: 'crystallize' })
   }
 
   const bri = applyBrittle(statuses)
   statuses = bri.list
-  if (bri.message) messages.push(bri.message)
+  if (bri.message) messages.push({ text: bri.message, key: 'brittle' })
 
   const caustic = applyCaustic(statuses)
   statuses = caustic.list
-  if (caustic.message) messages.push(caustic.message)
+  if (caustic.message) messages.push({ text: caustic.message, key: 'caustic' })
 
   const cond = applyConductiveOnce(statuses)
   statuses = cond.list
-  if (cond.message) messages.push(cond.message)
+  if (cond.message) messages.push({ text: cond.message, key: 'conductive' })
 
   const dis = applyDisrupt(statuses)
   if (dis) {
     statuses = dis
-    messages.push(reactionMessages.disrupt)
+    messages.push({ text: reactionMessages.disrupt, key: 'disrupt' })
   }
 
   const cs = applyCalledShot(statuses)
   if (cs) {
     statuses = cs
-    messages.push(reactionMessages.calledShot)
+    messages.push({ text: reactionMessages.calledShot, key: 'calledShot' })
   }
 
   const nec = applyNecrosis(statuses)
   if (nec) {
     statuses = nec
-    messages.push(reactionMessages.necrosis)
+    messages.push({ text: reactionMessages.necrosis, key: 'necrosis' })
   }
 
   const tar = applyTar(statuses)
   if (tar) {
     statuses = tar
-    messages.push(reactionMessages.tar)
+    messages.push({ text: reactionMessages.tar, key: 'tar' })
   }
 
   const stg = applyStagger(statuses)
   if (stg) {
     statuses = stg
-    messages.push(reactionMessages.stagger)
+    messages.push({ text: reactionMessages.stagger, key: 'stagger' })
   }
 
   return { statuses, messages, immediateDamage: immediateDamage > 0 ? immediateDamage : undefined }

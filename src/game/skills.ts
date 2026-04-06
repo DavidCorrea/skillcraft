@@ -31,6 +31,11 @@ export interface SkillDefinition {
   selfTarget?: boolean
   /** elemental = normal defenses; physical = fortitude path; none = mend/ward/purge. */
   damageKind?: 'elemental' | 'physical' | 'none'
+  /**
+   * Extra Chebyshev radius before AoE tiers (max(|dx|,|dy|) from anchor).
+   * Defaults to 0 — at `aoeTier` 0 the pattern is anchor-only unless this is set.
+   */
+  aoeBase?: number
 }
 
 export const SKILL_ROSTER: SkillDefinition[] = [
@@ -188,18 +193,31 @@ export function getSkillDef(id: SkillId): SkillDefinition {
   return byId[id]
 }
 
-/** Triangular loadout cost for `rangeTier` extra reach (+1 range per tier). */
-export function rangeTierPointCost(rangeTier: number): number {
-  const t = Math.max(0, Math.floor(rangeTier))
+/** Default half-size for legacy standalone pattern UIs (7×7 grid). Not used as default combat AoE. */
+export const PATTERN_GRID_RADIUS = 3
+
+/** Triangular loadout cost for tier T: T*(T+1)/2 (used for cast range and AoE tiers). */
+export function tierPointCost(tier: number): number {
+  const t = Math.max(0, Math.floor(tier))
   return (t * (t + 1)) / 2
 }
 
-/** Largest tier such that {@link rangeTierPointCost}(tier) ≤ `loadoutPointsAvailable`. */
+/** @deprecated Use {@link tierPointCost} (same formula). */
+export function rangeTierPointCost(rangeTier: number): number {
+  return tierPointCost(rangeTier)
+}
+
+/** Largest tier such that {@link tierPointCost}(tier) ≤ `loadoutPointsAvailable`. */
 export function maxPurchasableRangeTier(loadoutPointsAvailable: number): number {
   let avail = Math.max(0, loadoutPointsAvailable)
   let t = 0
-  while (rangeTierPointCost(t + 1) <= avail) t += 1
+  while (tierPointCost(t + 1) <= avail) t += 1
   return Math.min(24, t)
+}
+
+/** Largest AoE tier affordable with the same triangular curve as cast range. */
+export function maxPurchasableAoeTier(loadoutPointsAvailable: number): number {
+  return maxPurchasableRangeTier(loadoutPointsAvailable)
 }
 
 /** Max cast Manhattan distance: base + Arcane reach + per-skill range tiers (non-self only). */
@@ -214,14 +232,44 @@ export function effectiveCastRangeForLoadout(
   return base + tier
 }
 
+/** Chebyshev radius: each pattern offset must satisfy max(|dx|,|dy|) ≤ this value. Tier 0 = anchor cell only. */
+export function effectiveAoERadius(def: SkillDefinition, entry: SkillLoadoutEntry): number {
+  if (def.selfTarget) return 0
+  const base = def.aoeBase ?? 0
+  return base + Math.max(0, Math.floor(entry.aoeTier ?? 0))
+}
+
+export function offsetWithinAoE(o: PatternOffset, def: SkillDefinition, entry: SkillLoadoutEntry): boolean {
+  if (def.selfTarget) return o.dx === 0 && o.dy === 0
+  const R = effectiveAoERadius(def, entry)
+  return Math.max(Math.abs(o.dx), Math.abs(o.dy)) <= R
+}
+
+export function patternRespectsAoE(pattern: PatternOffset[], def: SkillDefinition, entry: SkillLoadoutEntry): boolean {
+  return pattern.every((o) => offsetWithinAoE(o, def, entry))
+}
+
+/** Drop offsets outside current AoE; if empty, return a single origin cell. */
+export function trimPatternToAoE(pattern: PatternOffset[], def: SkillDefinition, entry: SkillLoadoutEntry): PatternOffset[] {
+  const R = effectiveAoERadius(def, entry)
+  const next = pattern.filter((o) => Math.max(Math.abs(o.dx), Math.abs(o.dy)) <= R)
+  if (next.length > 0) return next
+  return [{ dx: 0, dy: 0 }]
+}
+
 /** Pattern + stacks (what sets base mana before discount). */
 export function basePowerCost(entry: SkillLoadoutEntry): number {
   return entry.pattern.length + entry.statusStacks
 }
 
-/** Loadout points: power + mana-efficiency points + range tier cost. */
+/** Loadout points: power + mana-efficiency points + range tier cost + AoE tier cost. */
 export function entryPointCost(entry: SkillLoadoutEntry): number {
-  return basePowerCost(entry) + entry.manaDiscount + rangeTierPointCost(entry.rangeTier ?? 0)
+  return (
+    basePowerCost(entry) +
+    entry.manaDiscount +
+    tierPointCost(entry.rangeTier ?? 0) +
+    tierPointCost(entry.aoeTier ?? 0)
+  )
 }
 
 /**
@@ -340,10 +388,51 @@ export function buildStatusForSkill(
   }
 }
 
-export const PATTERN_GRID_RADIUS = 3
-
 export function offsetInPatternGrid(o: PatternOffset): boolean {
   return Math.abs(o.dx) <= PATTERN_GRID_RADIUS && Math.abs(o.dy) <= PATTERN_GRID_RADIUS
+}
+
+/**
+ * Half-size of the pattern count grid in the loadout editor (Chebyshev radius from anchor).
+ * Pattern placement is limited by {@link effectiveAoERadius}, not by cast range.
+ */
+export function loadoutPatternEditRadius(def: SkillDefinition, entry: SkillLoadoutEntry): number {
+  return Math.max(0, effectiveAoERadius(def, entry))
+}
+
+/** Count grid for pattern editing; `radius` defaults to legacy 7×7. */
+export function patternOffsetsToCountGrid(pattern: PatternOffset[], radius: number = PATTERN_GRID_RADIUS): number[][] {
+  const size = radius * 2 + 1
+  const g: number[][] = Array.from({ length: size }, () => Array(size).fill(0))
+  for (const o of pattern) {
+    const xi = o.dx + radius
+    const yi = o.dy + radius
+    if (xi >= 0 && xi < size && yi >= 0 && yi < size) {
+      g[yi]![xi] += 1
+    }
+  }
+  return g
+}
+
+export function countGridToPatternOffsets(grid: number[][]): PatternOffset[] {
+  const size = grid.length
+  if (size === 0) return []
+  const radius = (size - 1) / 2
+  if (!Number.isInteger(radius)) {
+    throw new Error('countGridToPatternOffsets: grid side length must be odd')
+  }
+  const out: PatternOffset[] = []
+  for (let yi = 0; yi < size; yi++) {
+    for (let xi = 0; xi < size; xi++) {
+      const n = grid[yi]![xi]!
+      const dx = xi - radius
+      const dy = yi - radius
+      for (let i = 0; i < n; i++) {
+        out.push({ dx, dy })
+      }
+    }
+  }
+  return out
 }
 
 export function totalLoadoutPoints(entries: SkillLoadoutEntry[], traits: TraitPoints): number {
@@ -380,6 +469,7 @@ export function clampSkillLoadoutEntry(
     statusStacks: Math.max(1, Math.floor(entry.statusStacks)),
     manaDiscount: Math.max(0, Math.floor(entry.manaDiscount ?? 0)),
     rangeTier: def.selfTarget ? 0 : Math.max(0, Math.floor(entry.rangeTier ?? 0)),
+    aoeTier: def.selfTarget ? 0 : Math.max(0, Math.floor(entry.aoeTier ?? 0)),
   }
   if (def.selfTarget) {
     e.pattern = [{ dx: 0, dy: 0 }]
@@ -389,6 +479,9 @@ export function clampSkillLoadoutEntry(
     e.manaDiscount = Math.min(e.manaDiscount, Math.max(0, base - 1))
   }
   normalizeDiscount()
+  if (!def.selfTarget) {
+    e.pattern = trimPatternToAoE(e.pattern, def, e)
+  }
   while (entryPointCost(e) > maxPoints) {
     if (e.manaDiscount > 0) {
       e.manaDiscount--
@@ -402,6 +495,12 @@ export function clampSkillLoadoutEntry(
     }
     if (!def.selfTarget && (e.rangeTier ?? 0) > 0) {
       e.rangeTier = (e.rangeTier ?? 0) - 1
+      normalizeDiscount()
+      continue
+    }
+    if (!def.selfTarget && (e.aoeTier ?? 0) > 0) {
+      e.aoeTier = (e.aoeTier ?? 0) - 1
+      e.pattern = trimPatternToAoE(e.pattern, def, e)
       normalizeDiscount()
       continue
     }
@@ -427,8 +526,12 @@ export function clampSkillLoadoutEntry(
   if (def.selfTarget) {
     e.pattern = [{ dx: 0, dy: 0 }]
     e.rangeTier = 0
+    e.aoeTier = 0
   }
   normalizeDiscount()
+  if (!def.selfTarget) {
+    e.pattern = trimPatternToAoE(e.pattern, def, e)
+  }
   return e
 }
 
@@ -448,6 +551,7 @@ export function fitPlayerBudgetToLevel(
     statusStacks: e.statusStacks,
     manaDiscount: e.manaDiscount ?? 0,
     rangeTier: e.rangeTier ?? 0,
+    aoeTier: e.aoeTier ?? 0,
   }))
   let guard = 0
   while (totalLoadoutPoints(ent, t) > level && guard++ < 500) {
@@ -515,13 +619,19 @@ export function validateLoadout(
     if (!Number.isInteger(rt) || rt < 0) return 'Range tier must be a non-negative integer.'
     if (rt > 24) return 'Range tier is too high.'
     if (def.selfTarget && rt !== 0) return 'Self skills cannot use range tiers.'
+    const at = e.aoeTier ?? 0
+    if (!Number.isInteger(at) || at < 0) return 'AoE tier must be a non-negative integer.'
+    if (at > 24) return 'AoE tier is too high.'
+    if (def.selfTarget && at !== 0) return 'Self skills cannot use AoE tiers.'
     const base = basePowerCost(e)
     if (discount > base - 1) {
       return 'Mana discount is too high (mana cost must stay at least 1).'
     }
-    for (const o of e.pattern) {
-      if (!offsetInPatternGrid(o)) {
-        return 'Pattern cells must stay within the editor grid.'
+    if (!def.selfTarget) {
+      for (const o of e.pattern) {
+        if (!offsetWithinAoE(o, def, e)) {
+          return 'Pattern cells must stay within your AoE range from the anchor.'
+        }
       }
     }
   }

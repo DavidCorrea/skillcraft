@@ -111,8 +111,8 @@ export function canDamageTarget(
 }
 
 /**
- * Spawn positions for all actors. `turnOrder` defines initiative order.
- * Two actors: human south, other north. Three or more: corners NW → NE → SE → SW in order.
+ * Spawn positions for all actors. Pass **roster order** (not shuffled initiative): two actors —
+ * human south, other north; three or more — corners NW → NE → SE → SW in roster index order.
  */
 export function spawnPositionsForActors(
   size: number,

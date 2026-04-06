@@ -4,12 +4,15 @@ import type { MatchDraft } from './MatchSetupScreen'
 import {
   basePowerCost,
   clampSkillLoadoutEntry,
+  effectiveAoERadius,
   effectiveCastRangeForLoadout,
   entryPointCost,
   fitPlayerBudgetToLevel,
   getSkillDef,
+  maxPurchasableAoeTier,
   maxPurchasableRangeTier,
   maxSkillPointsBudget,
+  tierPointCost,
   maxSkillsForLevel,
   SKILL_ROSTER,
   totalLoadoutPoints,
@@ -26,10 +29,10 @@ import {
   totalTraitPoints,
 } from '../game/traits'
 import { randomFullPlayerLoadout } from '../game/randomCpuBuild'
+import { formatPresetLabel, PRESET_PLAYER_BUILDS, type PresetPlayerBuild } from '../game/preset-builds'
 import { traitDisplayByKey, traitReferenceZones } from '../game/trait-reference'
 import { GameGuide } from './help/GameGuide'
-import { PatternEditor } from './PatternEditor'
-import { SkillCastPlanner } from './SkillCastPlanner'
+import { SkillLoadoutGrid } from './SkillLoadoutGrid'
 import './loadout/loadout-surface.css'
 
 const STORAGE_KEY = 'skillcraft-loadout-v6'
@@ -37,11 +40,18 @@ const LEGACY_STORAGE_KEY = 'skillcraft-loadout-v4'
 
 const MAX_LEVEL = 99
 
+/** Default skills for a fresh loadout (before localStorage); order matches roster priority for editor focus. */
+function starterSkillIdsForLevel(level: number): string[] {
+  const cap = maxSkillsForLevel(level)
+  return ['ember', 'frost_bolt', 'tide_touch', 'spark'].slice(0, cap)
+}
+
 type SkillConfig = {
   pattern: PatternOffset[]
   statusStacks: number
   manaDiscount: number
   rangeTier?: number
+  aoeTier?: number
 }
 
 type Stored = {
@@ -65,6 +75,7 @@ function defaultSkillConfig(): SkillConfig {
     statusStacks: 1,
     manaDiscount: 0,
     rangeTier: 0,
+    aoeTier: 0,
   }
 }
 
@@ -223,7 +234,7 @@ export function LoadoutScreen({
   const [selected, setSelected] = useState<Set<string>>(() => {
     const lv = Math.min(MAX_LEVEL, Math.max(1, Math.floor(stored?.level ?? 14)))
     const cap = maxSkillsForLevel(lv)
-    const fallback = ['ember', 'frost_bolt', 'tide_touch', 'spark'].slice(0, cap)
+    const fallback = starterSkillIdsForLevel(lv)
     const ids = stored?.selectedIds ?? fallback
     return new Set(ids.slice(0, cap))
   })
@@ -238,6 +249,7 @@ export function LoadoutScreen({
               ...c,
               manaDiscount: c.manaDiscount ?? 0,
               rangeTier: c.rangeTier ?? 0,
+              aoeTier: c.aoeTier ?? 0,
             }
           : defaultSkillConfig()
       }
@@ -250,7 +262,42 @@ export function LoadoutScreen({
     ...stored?.traits,
   }))
   const [configureSkillId, setConfigureSkillId] = useState<string | null>(null)
+  /** Bumps when applying "Randomize everything" so SkillLoadoutGrid remounts and picks a fresh preview anchor. */
+  const [loadoutGridNonce, setLoadoutGridNonce] = useState(0)
+  const [presetSelection, setPresetSelection] = useState<'custom' | string>('custom')
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false)
+  const presetComboRef = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState<'traits' | 'skills'>('traits')
+
+  const presetTriggerLabel = useMemo(() => {
+    if (presetSelection === 'custom') return 'Custom (current)'
+    const p = PRESET_PLAYER_BUILDS.find((x) => x.id === presetSelection)
+    return p ? formatPresetLabel(p) : 'Custom (current)'
+  }, [presetSelection])
+
+  useEffect(() => {
+    if (!presetMenuOpen) return
+    function handlePointerDown(e: MouseEvent) {
+      if (presetComboRef.current?.contains(e.target as Node)) return
+      setPresetMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [presetMenuOpen])
+
+  useEffect(() => {
+    if (!presetMenuOpen) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPresetMenuOpen(false)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [presetMenuOpen])
+
+  function markLoadoutCustom(): void {
+    setPresetMenuOpen(false)
+    setPresetSelection('custom')
+  }
 
   const levelFitRef = useRef({ traits, configs, selected })
   levelFitRef.current = { traits, configs, selected }
@@ -273,6 +320,7 @@ export function LoadoutScreen({
         statusStacks: c.statusStacks,
         manaDiscount: c.manaDiscount ?? 0,
         rangeTier: c.rangeTier ?? 0,
+        aoeTier: c.aoeTier ?? 0,
       }
     })
     if (totalLoadoutPoints(ent, tr) <= level) return
@@ -284,6 +332,7 @@ export function LoadoutScreen({
         statusStacks: e.statusStacks,
         manaDiscount: e.manaDiscount,
         rangeTier: e.rangeTier ?? 0,
+        aoeTier: e.aoeTier ?? 0,
       }
     }
     setTraits(nt)
@@ -307,6 +356,7 @@ export function LoadoutScreen({
       statusStacks: c.statusStacks,
       manaDiscount: c.manaDiscount ?? 0,
       rangeTier: c.rangeTier ?? 0,
+      aoeTier: c.aoeTier ?? 0,
     }
   })
 
@@ -342,12 +392,15 @@ export function LoadoutScreen({
           statusStacks: activeCfg.statusStacks,
           manaDiscount: activeCfg.manaDiscount ?? 0,
           rangeTier: activeCfg.rangeTier ?? 0,
+          aoeTier: activeCfg.aoeTier ?? 0,
         }
       : null
   const activeReachR =
     activeSkill && activeEntry
       ? effectiveCastRangeForLoadout(getSkillDef(activeSkill.id), activeEntry, traits)
       : 0
+  const activeAoeR =
+    activeSkill && activeEntry ? effectiveAoERadius(getSkillDef(activeSkill.id), activeEntry) : 0
   const activeSkillBudget =
     activeSkill && activeEntry
       ? maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId)
@@ -378,7 +431,19 @@ export function LoadoutScreen({
           activeSkillBudget -
             activeCfg.pattern.length -
             activeCfg.statusStacks -
-            (activeCfg.manaDiscount ?? 0),
+            (activeCfg.manaDiscount ?? 0) -
+            tierPointCost(activeCfg.aoeTier ?? 0),
+        )
+      : 0
+
+  const activeMaxAoeTier =
+    activeSkill && activeCfg && !getSkillDef(activeSkill.id).selfTarget
+      ? maxPurchasableAoeTier(
+          activeSkillBudget -
+            activeCfg.pattern.length -
+            activeCfg.statusStacks -
+            (activeCfg.manaDiscount ?? 0) -
+            tierPointCost(activeCfg.rangeTier ?? 0),
         )
       : 0
 
@@ -410,6 +475,7 @@ export function LoadoutScreen({
   )
 
   function setTraitFromSlider<K extends keyof TraitPoints>(key: K, raw: number): void {
+    markLoadoutCustom()
     setTraits((t) => {
       const cap = level - skillPts - totalTraitPoints(t) + t[key]
       const v = Math.max(0, Math.min(Math.floor(raw), Math.max(0, cap)))
@@ -418,6 +484,7 @@ export function LoadoutScreen({
   }
 
   function toggleSkill(id: string): void {
+    markLoadoutCustom()
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -433,6 +500,7 @@ export function LoadoutScreen({
               statusStacks: c.statusStacks,
               manaDiscount: c.manaDiscount ?? 0,
               rangeTier: c.rangeTier ?? 0,
+              aoeTier: c.aoeTier ?? 0,
             }
           },
         )
@@ -445,6 +513,7 @@ export function LoadoutScreen({
             statusStacks: defaultSkillConfig().statusStacks,
             manaDiscount: 0,
             rangeTier: 0,
+            aoeTier: 0,
           },
           def,
           budget,
@@ -458,6 +527,7 @@ export function LoadoutScreen({
             statusStacks: starter.statusStacks,
             manaDiscount: starter.manaDiscount,
             rangeTier: starter.rangeTier ?? 0,
+            aoeTier: starter.aoeTier ?? 0,
           },
         }))
         setConfigureSkillId(id)
@@ -467,6 +537,7 @@ export function LoadoutScreen({
   }
 
   function setSkillConfig(id: string, partial: Partial<SkillConfig>): void {
+    markLoadoutCustom()
     setConfigs((cfg) => {
       const cur: SkillConfig = { ...(cfg[id] ?? defaultSkillConfig()), ...partial }
       const def = getSkillDef(id as SkillId)
@@ -479,6 +550,7 @@ export function LoadoutScreen({
             statusStacks: c.statusStacks,
             manaDiscount: c.manaDiscount ?? 0,
             rangeTier: c.rangeTier ?? 0,
+            aoeTier: c.aoeTier ?? 0,
           }
         },
       )
@@ -489,6 +561,7 @@ export function LoadoutScreen({
         statusStacks: cur.statusStacks,
         manaDiscount: cur.manaDiscount ?? 0,
         rangeTier: cur.rangeTier ?? 0,
+        aoeTier: cur.aoeTier ?? 0,
       }
       const clamped = clampSkillLoadoutEntry(draft, def, maxPts)
       return {
@@ -498,12 +571,14 @@ export function LoadoutScreen({
           statusStacks: clamped.statusStacks,
           manaDiscount: clamped.manaDiscount,
           rangeTier: clamped.rangeTier ?? 0,
+          aoeTier: clamped.aoeTier ?? 0,
         },
       }
     })
   }
 
   function resetSkillToBasic(id: string): void {
+    markLoadoutCustom()
     setConfigs((cfg) => ({
       ...cfg,
       [id]: defaultSkillConfig(),
@@ -511,7 +586,9 @@ export function LoadoutScreen({
   }
 
   function applyRandomFullLoadout(): void {
+    markLoadoutCustom()
     const { traits: nt, entries: ne } = randomFullPlayerLoadout(level)
+    setLoadoutGridNonce((n) => n + 1)
     setTraits(nt)
     setSelected(new Set(ne.map((e) => e.skillId)))
     setConfigs(() => {
@@ -524,12 +601,48 @@ export function LoadoutScreen({
               statusStacks: e.statusStacks,
               manaDiscount: e.manaDiscount ?? 0,
               rangeTier: e.rangeTier ?? 0,
+              aoeTier: e.aoeTier ?? 0,
             }
           : defaultSkillConfig()
       }
       return next
     })
     setConfigureSkillId(ne[0]?.skillId ?? null)
+  }
+
+  function applyPresetBuild(p: PresetPlayerBuild): void {
+    setPresetMenuOpen(false)
+    setLevel(p.level)
+    setTraits({ ...p.traits })
+    setSelected(new Set(p.entries.map((e) => e.skillId)))
+    setConfigs(() => {
+      const next: Record<string, SkillConfig> = {}
+      for (const s of SKILL_ROSTER) {
+        const e = p.entries.find((x) => x.skillId === s.id)
+        next[s.id] = e
+          ? {
+              pattern: e.pattern,
+              statusStacks: e.statusStacks,
+              manaDiscount: e.manaDiscount ?? 0,
+              rangeTier: e.rangeTier ?? 0,
+              aoeTier: e.aoeTier ?? 0,
+            }
+          : defaultSkillConfig()
+      }
+      return next
+    })
+    setConfigureSkillId(p.entries[0]?.skillId ?? null)
+    setLoadoutGridNonce((n) => n + 1)
+    setPresetSelection(p.id)
+  }
+
+  /** Traits to zero, no skills equipped, all skill configs base — level unchanged. */
+  function resetLoadoutUpgrades(): void {
+    markLoadoutCustom()
+    setTraits({ ...defaultTraitPoints() })
+    setSelected(new Set())
+    setConfigs(() => Object.fromEntries(SKILL_ROSTER.map((s) => [s.id, defaultSkillConfig()])))
+    setConfigureSkillId(null)
   }
 
   const footerHintTraits = traitsStepErr
@@ -578,6 +691,7 @@ export function LoadoutScreen({
               onChange={(e) => {
                 const n = Number(e.target.value)
                 if (Number.isNaN(n)) return
+                markLoadoutCustom()
                 setLevel(Math.min(MAX_LEVEL, Math.max(1, Math.floor(n))))
               }}
               aria-label="Level — total point budget"
@@ -631,6 +745,68 @@ export function LoadoutScreen({
               <circle cx="16" cy="16" r="1.35" fill="currentColor" />
             </svg>
           </button>
+          <button
+            type="button"
+            className="ls-loadout-reset"
+            onClick={resetLoadoutUpgrades}
+            title="Reset loadout for this level (clears traits and skills; keeps LV)"
+            aria-label="Reset loadout except level"
+          >
+            <svg className="ls-loadout-reset__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 6 6v0a6 6 0 0 1-6 6H10"
+              />
+            </svg>
+          </button>
+          <div className="ls-preset ls-preset--combobox" ref={presetComboRef}>
+            <button
+              type="button"
+              id="preset-template-trigger"
+              className="ls-preset-select ls-preset-select--trigger"
+              aria-label="Loadout template — level shown in each option"
+              aria-haspopup="listbox"
+              aria-expanded={presetMenuOpen}
+              aria-controls="preset-template-listbox"
+              onClick={() => setPresetMenuOpen((o) => !o)}
+            >
+              {presetTriggerLabel}
+            </button>
+            {presetMenuOpen ? (
+              <div
+                className="ls-preset-menu"
+                id="preset-template-listbox"
+                role="listbox"
+                aria-labelledby="preset-template-trigger"
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={presetSelection === 'custom'}
+                  className="ls-preset-option"
+                  onClick={() => markLoadoutCustom()}
+                >
+                  Custom (current)
+                </button>
+                {PRESET_PLAYER_BUILDS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="option"
+                    aria-selected={presetSelection === p.id}
+                    className="ls-preset-option"
+                    onClick={() => applyPresetBuild(p)}
+                  >
+                    {formatPresetLabel(p)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <GameGuide
@@ -665,6 +841,10 @@ export function LoadoutScreen({
               <li>
                 <strong>Randomize.</strong> The dice button spends your full level budget on traits, skills, and
                 configs at random.
+              </li>
+              <li>
+                <strong>Reset.</strong> The undo button clears traits, unequips all skills, and resets every skill config
+                to base values. Your level (LV) stays the same.
               </li>
             </ol>
           }
@@ -773,31 +953,26 @@ export function LoadoutScreen({
                   <div className="ls-stage__head">
                     <h2>{activeSkill.name}</h2>
                     <span className="ls-stage__meta">
-                      {activeSkill.element} · {activeEntry ? entryPointCost(activeEntry) : 0} pts · r{activeReachR}
+                      {activeSkill.element} · {activeEntry ? entryPointCost(activeEntry) : 0} pts · cast r
+                      {activeReachR} · AoE {activeAoeR}
                     </span>
                   </div>
-                  <div className="ls-stage__pair">
-                    <div className="ls-stage__board">
-                      <SkillCastPlanner
-                        skillId={activeSkill.id}
-                        pattern={activeCfg.pattern}
-                        range={activeSkill.range}
-                        effectiveRange={activeReachR}
-                        statusStacks={activeCfg.statusStacks}
-                        manaDiscount={activeCfg.manaDiscount ?? 0}
-                        selfTarget={!!getSkillDef(activeSkill.id).selfTarget}
-                        boardSize={boardSizeForLevel(level)}
-                        compact
-                      />
-                    </div>
-                    <div className="ls-stage__pattern">
-                      <PatternEditor
-                        pattern={activeCfg.pattern}
-                        disabled={false}
-                        compact
-                        onChange={(pattern) => setSkillConfig(activeSkill.id, { pattern })}
-                      />
-                    </div>
+                  <div className="ls-stage__grid">
+                    <SkillLoadoutGrid
+                      key={`skill-grid-${loadoutGridNonce}-${activeSkill.id}-${boardSizeForLevel(level)}-${activeReachR}-${activeCfg.rangeTier ?? 0}-${activeCfg.aoeTier ?? 0}-${getSkillDef(activeSkill.id).selfTarget ? '1' : '0'}`}
+                      skillId={activeSkill.id}
+                      pattern={activeCfg.pattern}
+                      onPatternChange={(pattern) => setSkillConfig(activeSkill.id, { pattern })}
+                      range={activeSkill.range}
+                      effectiveRange={activeReachR}
+                      statusStacks={activeCfg.statusStacks}
+                      manaDiscount={activeCfg.manaDiscount ?? 0}
+                      rangeTier={activeCfg.rangeTier ?? 0}
+                      aoeTier={activeCfg.aoeTier ?? 0}
+                      selfTarget={!!getSkillDef(activeSkill.id).selfTarget}
+                      boardSize={boardSizeForLevel(level)}
+                      loadoutShuffleNonce={loadoutGridNonce}
+                    />
                   </div>
                 </>
               ) : null}
@@ -824,7 +999,7 @@ export function LoadoutScreen({
                       />
                     </div>
                     <div className="ls-inline__row">
-                      <span>Mana −</span>
+                      <span>Mana disc.</span>
                       <input
                         type="number"
                         min={0}
@@ -838,28 +1013,48 @@ export function LoadoutScreen({
                             ),
                           })
                         }
-                        aria-label="Mana discount"
+                        aria-label="Mana discount (loadout points to lower battle mana)"
                       />
                     </div>
                     {!getSkillDef(activeSkill.id).selfTarget ? (
-                      <div className="ls-inline__row">
-                        <span>Range+</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={activeMaxRangeTier}
-                          value={activeCfg.rangeTier ?? 0}
-                          onChange={(e) =>
-                            setSkillConfig(activeSkill.id, {
-                              rangeTier: Math.max(
-                                0,
-                                Math.min(activeMaxRangeTier, Math.floor(Number(e.target.value))),
-                              ),
-                            })
-                          }
-                          aria-label="Extra cast range tiers"
-                        />
-                      </div>
+                      <>
+                        <div className="ls-inline__row">
+                          <span>Cast rng</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={activeMaxRangeTier}
+                            value={activeCfg.rangeTier ?? 0}
+                            onChange={(e) =>
+                              setSkillConfig(activeSkill.id, {
+                                rangeTier: Math.max(
+                                  0,
+                                  Math.min(activeMaxRangeTier, Math.floor(Number(e.target.value))),
+                                ),
+                              })
+                            }
+                            aria-label="Cast range tiers"
+                          />
+                        </div>
+                        <div className="ls-inline__row">
+                          <span>AoE rng</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={activeMaxAoeTier}
+                            value={activeCfg.aoeTier ?? 0}
+                            onChange={(e) =>
+                              setSkillConfig(activeSkill.id, {
+                                aoeTier: Math.max(
+                                  0,
+                                  Math.min(activeMaxAoeTier, Math.floor(Number(e.target.value))),
+                                ),
+                              })
+                            }
+                            aria-label="AoE range tiers"
+                          />
+                        </div>
+                      </>
                     ) : null}
                   </div>
                   <button type="button" className="ls-btn-ghost" onClick={() => resetSkillToBasic(activeSkill.id)}>

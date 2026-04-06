@@ -18,7 +18,8 @@
 | File | Notes |
 |------|--------|
 | `types.ts` | Shared types: `GameState`, `ActorState`, `SkillLoadoutEntry`, `TraitPoints`, `MatchSettings`, `BattleConfig` |
-| `engine.ts` | `GameAction`, `applyAction`, `allLegalActions`, turn flow, win checks, combat resolution |
+| `engine.ts` | `GameAction`, `applyAction`, `allLegalActions`, turn flow, win checks, combat resolution, sudden-death boundaries |
+| `overtime.ts` | Sudden death: storm geometry, Chebyshev lethal check, damage scaling, activation roll |
 | `skills.ts` | Skill definitions, patterns, mana/damage/status helpers |
 | `traits.ts` | Trait scaling, Strike damage, stamina, defenses |
 | `board.ts` | Grid size, coords, spawn positions, Manhattan distance, targeting helpers |
@@ -27,6 +28,7 @@
 | `elements.ts` | Element typing for skills |
 | `actor-label.ts` | Log/display names |
 | `randomCpuBuild.ts` | Random CPU loadouts for tests or presets |
+| `balance-sim.ts` | Headless CPU-vs-CPU duels (`simulateDuelCpuVsCpu`) and Monte Carlo aggregates for balance sampling |
 | `test-fixtures.ts` | Shared test builders |
 
 ## UI layer (`src/ui/`)
@@ -36,7 +38,7 @@
 | `LoadoutScreen.tsx` | Player loadout before a match |
 | `MatchSetupScreen.tsx` | Roster and match options |
 | `BattleScreen.tsx` | Active battle |
-| `SkillCastPlanner.tsx`, `SkillCastMap.tsx`, `PatternEditor.tsx` | Skill pattern editing |
+| `SkillLoadoutGrid.tsx`, `SkillCastMap.tsx`, `PatternEditor.tsx` | Skill pattern editing |
 | `board/` | `HolographicBattleBoard`, geometry, effects (`fx.ts`), styles |
 | `battle/` | Battle chrome, tooltips, CSS |
 
@@ -44,6 +46,7 @@
 
 - Pattern: colocated `*.test.ts` under `src/` (e.g. `engine.test.ts`, `skills.test.ts`).
 - Vitest config: `vite.config.ts` (`environment: 'node'`, `include: ['src/**/*.test.ts']`).
+- `npm run test:balance` — runs `balance-sim.test.ts` only (Monte Carlo logs a one-line summary to stdout).
 
 ## Config
 

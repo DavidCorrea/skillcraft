@@ -1,12 +1,91 @@
 import type { GameAction } from '../game/engine'
 import { applyAction, allLegalActions, gatherOffensiveHits } from '../game/engine'
+import { cpuActionHistoryKey, hashCpuSearchPosition } from './cpuPositionHash'
 import type { ActorId, ActorState, CpuDifficulty, GameState } from '../game/types'
 import { canDamageTarget, coordKey, manhattan } from '../game/board'
+import { currentOvertimeDamageAmount, isOvertimeLethal } from '../game/overtime'
 import { damageForCast, getSkillDef, mendHealAmount } from '../game/skills'
 import { physicalStrikeDamageDealt, totalStrikeDamage } from '../game/traits'
 
 const WIN_SCORE = 1_000_000
 const LOSS_SCORE = -1_000_000
+
+type TtFlag = 'exact' | 'lower' | 'upper'
+
+type TtEntry = {
+  score: number
+  flag: TtFlag
+}
+
+/** Key = position hash XOR depth tag — entries are only valid for that remaining depth. */
+function ttCompositeKey(positionHash: bigint, depth: number): bigint {
+  return (positionHash ^ (BigInt(depth) * 1000003n)) & ((1n << 64n) - 1n)
+}
+
+type SearchTables = {
+  tt: Map<bigint, TtEntry>
+  history: Map<string, number>
+  killer0: Map<number, GameAction>
+  killer1: Map<number, GameAction>
+}
+
+function createSearchTables(): SearchTables {
+  return {
+    tt: new Map(),
+    history: new Map(),
+    killer0: new Map(),
+    killer1: new Map(),
+  }
+}
+
+function ttProbe(tables: SearchTables, key: bigint, alpha: number, beta: number): number | null {
+  const entry = tables.tt.get(key)
+  if (!entry) return null
+  if (entry.flag === 'exact') return entry.score
+  if (entry.flag === 'lower' && entry.score >= beta) return entry.score
+  if (entry.flag === 'upper' && entry.score <= alpha) return entry.score
+  return null
+}
+
+function ttStore(tables: SearchTables, key: bigint, value: number, alpha: number, beta: number) {
+  let flag: TtFlag
+  if (value <= alpha) flag = 'upper'
+  else if (value >= beta) flag = 'lower'
+  else flag = 'exact'
+
+  tables.tt.set(key, { score: value, flag })
+}
+
+function gameActionsEqual(a: GameAction, b: GameAction): boolean {
+  if (a.type !== b.type) return false
+  switch (a.type) {
+    case 'skip':
+      return true
+    case 'move':
+      return b.type === 'move' && a.to.x === b.to.x && a.to.y === b.to.y
+    case 'strike':
+      return b.type === 'strike' && (a.targetId ?? '') === (b.targetId ?? '')
+    case 'cast':
+      return (
+        b.type === 'cast' &&
+        a.skillId === b.skillId &&
+        a.target.x === b.target.x &&
+        a.target.y === b.target.y
+      )
+  }
+}
+
+function recordKiller(tables: SearchTables, depth: number, action: GameAction) {
+  const k0 = tables.killer0.get(depth)
+  if (k0 && gameActionsEqual(k0, action)) return
+  if (k0 !== undefined) tables.killer1.set(depth, k0)
+  tables.killer0.set(depth, action)
+}
+
+function bumpHistory(tables: SearchTables, actor: ActorId, action: GameAction, depth: number) {
+  const k = cpuActionHistoryKey(actor, action)
+  tables.history.set(k, (tables.history.get(k) ?? 0) + depth * depth)
+}
 
 function searchPliesForDifficulty(d: CpuDifficulty): number {
   if (d === 'easy') return 2
@@ -31,6 +110,7 @@ function sameTeam(state: GameState, a: ActorId, b: ActorId): boolean {
 }
 
 function winningSideScore(state: GameState, perspectiveId: ActorId): number | null {
+  if (state.tie) return 0
   if (!state.winner) return null
   return sameTeam(state, state.winner, perspectiveId) ? WIN_SCORE : LOSS_SCORE
 }
@@ -86,6 +166,9 @@ function otherInDuel(state: GameState, self: ActorId): ActorId {
  * Easy: greedy with random noise.
  */
 export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
+  if (state.tie) {
+    throw new Error('Game over (tie)')
+  }
   const actions = allLegalActions(state, actorId)
   if (actions.length === 0) {
     throw new Error(`${actorId} has no legal actions`)
@@ -104,9 +187,7 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
     return pickCpuGreedy(state, actorId, diff)
   }
 
-  const ordered = [...actions].sort(
-    (a, b) => tacticalPriority(state, actorId, b) - tacticalPriority(state, actorId, a),
-  )
+  const tables = createSearchTables()
 
   const jitter =
     diff === 'nightmare'
@@ -117,6 +198,7 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
 
   if (state.turnOrder.length === 2) {
     const plies = searchPliesForDifficulty(diff)
+    const ordered = orderedActions(state, actorId, plies - 1, tables)
     let best: GameAction = ordered[0]!
     let bestScore = -Infinity
     const other = otherInDuel(state, actorId)
@@ -127,7 +209,7 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
       const next = res.state
       if (next.winner === other) continue
 
-      const score = minimax(next, plies - 1, -Infinity, Infinity, actorId, other)
+      const score = minimax(next, plies - 1, -Infinity, Infinity, actorId, other, tables)
       if (score + jitter > bestScore) {
         bestScore = score + jitter
         best = action
@@ -138,10 +220,11 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
   }
 
   const pliesMulti = searchPliesMulti(diff)
-  let bestM: GameAction = ordered[0]!
+  const orderedMulti = orderedActions(state, actorId, pliesMulti - 1, tables)
+  let bestM: GameAction = orderedMulti[0]!
   let bestScoreM = -Infinity
 
-  for (const action of ordered) {
+  for (const action of orderedMulti) {
     const res = applyAction(state, actorId, action)
     if (res.error) continue
     const next = res.state
@@ -151,7 +234,7 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
     const score =
       term === WIN_SCORE
         ? WIN_SCORE
-        : paranoidSearch(next, pliesMulti - 1, -Infinity, Infinity, actorId)
+        : paranoidSearch(next, pliesMulti - 1, -Infinity, Infinity, actorId, tables)
     if (score + jitter > bestScoreM) {
       bestScoreM = score + jitter
       bestM = action
@@ -181,14 +264,35 @@ function paranoidSearch(
   alpha: number,
   beta: number,
   perspectiveId: ActorId,
+  tables: SearchTables,
 ): number {
+  const alphaOrig = alpha
+  const betaOrig = beta
+  const ph = hashCpuSearchPosition(state, 'multi', perspectiveId, undefined)
+  const key = ttCompositeKey(ph, depth)
+
   const terminal = winningSideScore(state, perspectiveId)
-  if (terminal !== null) return terminal
-  if (depth === 0) return evaluateStaticMulti(state, perspectiveId)
+  if (terminal !== null) {
+    ttStore(tables, key, terminal, alphaOrig, betaOrig)
+    return terminal
+  }
+
+  const probed = ttProbe(tables, key, alpha, beta)
+  if (probed !== null) return probed
+
+  if (depth === 0) {
+    const v = evaluateStaticMulti(state, perspectiveId)
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
 
   const actor = state.turn
-  const actions = orderedActions(state, actor)
-  if (actions.length === 0) return evaluateStaticMulti(state, perspectiveId)
+  const actions = orderedActions(state, actor, depth, tables)
+  if (actions.length === 0) {
+    const v = evaluateStaticMulti(state, perspectiveId)
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
 
   const maximizing = sameTeam(state, actor, perspectiveId)
 
@@ -198,14 +302,24 @@ function paranoidSearch(
       const res = applyAction(state, actor, action)
       if (res.error) continue
       const t = winningSideScore(res.state, perspectiveId)
-      if (t === WIN_SCORE) return WIN_SCORE
+      if (t === WIN_SCORE) {
+        ttStore(tables, key, WIN_SCORE, alphaOrig, betaOrig)
+        return WIN_SCORE
+      }
       const child =
-        t === LOSS_SCORE ? LOSS_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId)
+        t === LOSS_SCORE ? LOSS_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
       value = Math.max(value, child)
-      if (value > beta) return value
+      if (value > beta) {
+        recordKiller(tables, depth, action)
+        bumpHistory(tables, actor, action, depth)
+        ttStore(tables, key, value, alphaOrig, betaOrig)
+        return value
+      }
       alpha = Math.max(alpha, value)
     }
-    return value === -Infinity ? evaluateStaticMulti(state, perspectiveId) : value
+    const v = value === -Infinity ? evaluateStaticMulti(state, perspectiveId) : value
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
   }
 
   let value = Infinity
@@ -213,14 +327,24 @@ function paranoidSearch(
     const res = applyAction(state, actor, action)
     if (res.error) continue
     const t = winningSideScore(res.state, perspectiveId)
-    if (t === LOSS_SCORE) return LOSS_SCORE
+    if (t === LOSS_SCORE) {
+      ttStore(tables, key, LOSS_SCORE, alphaOrig, betaOrig)
+      return LOSS_SCORE
+    }
     const child =
-      t === WIN_SCORE ? WIN_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId)
+      t === WIN_SCORE ? WIN_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
     value = Math.min(value, child)
-    if (value < alpha) return value
+    if (value < alpha) {
+      recordKiller(tables, depth, action)
+      bumpHistory(tables, actor, action, depth)
+      ttStore(tables, key, value, alphaOrig, betaOrig)
+      return value
+    }
     beta = Math.min(beta, value)
   }
-  return value === Infinity ? evaluateStaticMulti(state, perspectiveId) : value
+  const v = value === Infinity ? evaluateStaticMulti(state, perspectiveId) : value
+  ttStore(tables, key, v, alphaOrig, betaOrig)
+  return v
 }
 
 function minimax(
@@ -230,14 +354,45 @@ function minimax(
   beta: number,
   perspectiveId: ActorId,
   opponentId: ActorId,
+  tables: SearchTables,
 ): number {
-  if (state.winner === perspectiveId) return WIN_SCORE
-  if (state.winner === opponentId) return LOSS_SCORE
-  if (depth === 0) return evaluateStaticDuel(state, perspectiveId, opponentId)
+  const alphaOrig = alpha
+  const betaOrig = beta
+  const ph = hashCpuSearchPosition(state, 'duel', perspectiveId, opponentId)
+  const key = ttCompositeKey(ph, depth)
+
+  if (state.tie) {
+    const v = 0
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
+  if (state.winner === perspectiveId) {
+    const v = WIN_SCORE
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
+  if (state.winner === opponentId) {
+    const v = LOSS_SCORE
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
+
+  const probed = ttProbe(tables, key, alpha, beta)
+  if (probed !== null) return probed
+
+  if (depth === 0) {
+    const v = evaluateStaticDuel(state, perspectiveId, opponentId)
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
 
   const actor = state.turn
-  const actions = orderedActions(state, actor)
-  if (actions.length === 0) return evaluateStaticDuel(state, perspectiveId, opponentId)
+  const actions = orderedActions(state, actor, depth, tables)
+  if (actions.length === 0) {
+    const v = evaluateStaticDuel(state, perspectiveId, opponentId)
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
+  }
 
   const isMax = actor === perspectiveId
 
@@ -246,29 +401,70 @@ function minimax(
     for (const action of actions) {
       const res = applyAction(state, actor, action)
       if (res.error) continue
-      if (res.state.winner === perspectiveId) return WIN_SCORE
-      value = Math.max(value, minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId))
-      if (value > beta) return value
+      if (res.state.winner === perspectiveId) {
+        ttStore(tables, key, WIN_SCORE, alphaOrig, betaOrig)
+        return WIN_SCORE
+      }
+      const child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+      value = Math.max(value, child)
+      if (value > beta) {
+        recordKiller(tables, depth, action)
+        bumpHistory(tables, actor, action, depth)
+        ttStore(tables, key, value, alphaOrig, betaOrig)
+        return value
+      }
       alpha = Math.max(alpha, value)
     }
-    return value === -Infinity ? evaluateStaticDuel(state, perspectiveId, opponentId) : value
+    const v = value === -Infinity ? evaluateStaticDuel(state, perspectiveId, opponentId) : value
+    ttStore(tables, key, v, alphaOrig, betaOrig)
+    return v
   }
 
   let value = Infinity
   for (const action of actions) {
     const res = applyAction(state, actor, action)
     if (res.error) continue
-    if (res.state.winner === opponentId) return LOSS_SCORE
-    value = Math.min(value, minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId))
-    if (value < alpha) return value
+    if (res.state.winner === opponentId) {
+      ttStore(tables, key, LOSS_SCORE, alphaOrig, betaOrig)
+      return LOSS_SCORE
+    }
+    const child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+    value = Math.min(value, child)
+    if (value < alpha) {
+      recordKiller(tables, depth, action)
+      bumpHistory(tables, actor, action, depth)
+      ttStore(tables, key, value, alphaOrig, betaOrig)
+      return value
+    }
     beta = Math.min(beta, value)
   }
-  return value === Infinity ? evaluateStaticDuel(state, perspectiveId, opponentId) : value
+  const v = value === Infinity ? evaluateStaticDuel(state, perspectiveId, opponentId) : value
+  ttStore(tables, key, v, alphaOrig, betaOrig)
+  return v
 }
 
-function orderedActions(state: GameState, actor: ActorId): GameAction[] {
+function orderScore(
+  state: GameState,
+  actor: ActorId,
+  action: GameAction,
+  depth: number,
+  tables: SearchTables,
+): number {
+  let s = tacticalPriority(state, actor, action)
+  const hk = cpuActionHistoryKey(actor, action)
+  s += (tables.history.get(hk) ?? 0) * 12
+  const k0 = tables.killer0.get(depth)
+  const k1 = tables.killer1.get(depth)
+  if (k0 && gameActionsEqual(k0, action)) s += 25_000
+  if (k1 && gameActionsEqual(k1, action)) s += 12_000
+  return s
+}
+
+function orderedActions(state: GameState, actor: ActorId, depth: number, tables: SearchTables): GameAction[] {
   const raw = allLegalActions(state, actor)
-  return [...raw].sort((a, b) => tacticalPriority(state, actor, b) - tacticalPriority(state, actor, a))
+  return [...raw].sort(
+    (a, b) => orderScore(state, actor, b, depth, tables) - orderScore(state, actor, a, depth, tables),
+  )
 }
 
 /** Higher = search first (better for alpha-beta). */
@@ -307,7 +503,11 @@ function tacticalPriority(state: GameState, actor: ActorId, action: GameAction):
 
   if (action.type === 'move') {
     const d = manhattan(action.to, foe.pos)
-    return 3_000_000 - d * 2_500
+    let p = 3_000_000 - d * 2_500
+    if (isOvertimeLethal(state, action.to)) {
+      p -= 80_000 + currentOvertimeDamageAmount(state.overtime!) * 6_000
+    }
+    return p
   }
 
   if (action.type === 'skip') {
@@ -345,6 +545,9 @@ function evaluateStaticDuel(state: GameState, perspectiveId: ActorId, opponentId
   score += residualTilePressure(state, p.pos, opponentId) * 4
   score -= residualTilePressure(state, c.pos, perspectiveId) * 4
 
+  score -= overtimePressure(state, c.pos)
+  score += overtimePressure(state, p.pos)
+
   return score
 }
 
@@ -378,6 +581,9 @@ function evaluateStaticMulti(state: GameState, perspectiveId: ActorId): number {
   score += residualTilePressure(state, foe.pos, foeId) * 4
   score -= residualTilePressure(state, me.pos, perspectiveId) * 4
 
+  score -= overtimePressure(state, me.pos)
+  score += overtimePressure(state, foe.pos)
+
   return score
 }
 
@@ -396,6 +602,11 @@ function approxStrikeDamage(attacker: ActorState, defender: ActorState): number 
     1,
     physicalStrikeDamageDealt(raw, defender.traits) + extraVulnerabilityFlat(defender),
   )
+}
+
+function overtimePressure(state: GameState, pos: { x: number; y: number }): number {
+  if (!state.overtime || !isOvertimeLethal(state, pos)) return 0
+  return currentOvertimeDamageAmount(state.overtime) * 18
 }
 
 function residualTilePressure(state: GameState, cell: { x: number; y: number }, standsOn: ActorId): number {

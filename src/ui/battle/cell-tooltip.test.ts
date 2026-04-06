@@ -29,31 +29,31 @@ function hazardAt(owner: string): TileImpact {
 describe('describeBattleCellTooltip', () => {
   it('returns null for an empty cell', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     expect(describeBattleCellTooltip(s, { x: 0, y: 0 })).toBeNull()
   })
 
   it('describes a lingering hazard only', () => {
     resetIdsForTests()
-    let s = createInitialState(sampleConfig)
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 3, y: 2 } }).state!
     const t = describeBattleCellTooltip(s, { x: 3, y: 2 })
     expect(t).toContain('Lingering: Ember')
     expect(t).toMatch(/\d+ turns/)
-    expect(t).toContain('You')
+    expect(t).toContain('Vex')
   })
 
   it('describes an actor only', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const p = s.actors[TID.human]!.pos
     const t = describeBattleCellTooltip(s, p)
-    expect(t).toMatch(/^You — \d+\/\d+$/)
+    expect(t).toMatch(/^Vex — \d+\/\d+$/)
   })
 
   it('describes actor with statuses', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const player = {
       ...s.actors[TID.human]!,
       statuses: [{ id: 'st1', tag: { t: 'burning' as const, duration: 2, dot: 3 } }],
@@ -65,20 +65,20 @@ describe('describeBattleCellTooltip', () => {
 
   it('describes hazard and actor when both present', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const k = coordKey(s.actors[TID.human]!.pos)
     const next: GameState = {
       ...s,
       impactedTiles: { ...s.impactedTiles, [k]: hazardAt(TID.human) },
     }
     const t = describeBattleCellTooltip(next, s.actors[TID.human]!.pos)
-    expect(t).toContain('You —')
+    expect(t).toContain('Vex —')
     expect(t).toContain('Lingering: Ember')
   })
 
   it('lists two actors on the same cell', () => {
     resetIdsForTests()
-    const s = createInitialState(sampleConfig)
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const pos = { x: 2, y: 4 }
     const next: GameState = {
       ...s,
@@ -90,7 +90,7 @@ describe('describeBattleCellTooltip', () => {
     }
     const t = describeBattleCellTooltip(next, pos)
     expect(t).toContain('\n')
-    expect(t).toContain('You —')
+    expect(t).toContain('Vex —')
     expect(t).toContain('Hostile —')
   })
 })

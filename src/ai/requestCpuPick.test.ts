@@ -19,9 +19,9 @@ const cfg = duelBattleConfig({
 })
 
 describe('requestCpuPick', () => {
-  it('uses synchronous pickCpuAction in Vitest (no Web Worker)', async () => {
+  it('uses synchronous pickCpuAction in Vitest (no Web Worker)', { timeout: 15_000 }, async () => {
     resetIdsForTests()
-    let s = createInitialState(cfg)
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
     s = applyAction(s, TID.human, { type: 'move', to: { x: 3, y: 5 } }).state!
     const action = await requestCpuPick(s, TID.cpu, null)
     expect(['move', 'strike', 'cast', 'skip']).toContain(action.type)

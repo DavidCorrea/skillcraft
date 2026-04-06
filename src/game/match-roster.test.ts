@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assignCallsigns,
   buildCustomMatchSettings,
   coerceFriendlyFire,
   resolveTeamColorSlotForTeamId,
@@ -11,6 +12,21 @@ import type { SkillLoadoutEntry, TraitPoints } from './types'
 
 const emptyLoadout: SkillLoadoutEntry[] = []
 const traits: TraitPoints = defaultTraitPoints()
+
+describe('assignCallsigns', () => {
+  it('returns unique names for typical roster sizes', () => {
+    for (const n of [1, 2, 4, 8]) {
+      const names = assignCallsigns(n)
+      expect(names).toHaveLength(n)
+      expect(new Set(names).size).toBe(n)
+    }
+  })
+
+  it('returns empty for non-positive count', () => {
+    expect(assignCallsigns(0)).toEqual([])
+    expect(assignCallsigns(-1)).toEqual([])
+  })
+})
 
 describe('validateCustomTeamIds', () => {
   it('accepts 2v1v1 style teams', () => {
@@ -142,5 +158,36 @@ describe('buildCustomMatchSettings', () => {
         defaultCpuDifficulty: 'normal',
       }),
     ).toThrow()
+  })
+
+  it('maps per-cpu difficulties when cpuDifficulties is provided', () => {
+    const ms = buildCustomMatchSettings({
+      humanLoadout: emptyLoadout,
+      humanTraits: traits,
+      cpuBuilds: [
+        { loadout: emptyLoadout, traits },
+        { loadout: emptyLoadout, traits },
+      ],
+      teamIds: [0, 1, 2],
+      defaultCpuDifficulty: 'normal',
+      cpuDifficulties: ['easy', 'nightmare'],
+    })
+    const cpus = ms.roster.filter((r) => !r.isHuman)
+    expect(cpus).toHaveLength(2)
+    expect(ms.perCpuDifficulty?.[cpus[0]!.actorId]).toBe('easy')
+    expect(ms.perCpuDifficulty?.[cpus[1]!.actorId]).toBe('nightmare')
+  })
+
+  it('throws when cpuDifficulties length does not match cpuBuilds', () => {
+    expect(() =>
+      buildCustomMatchSettings({
+        humanLoadout: emptyLoadout,
+        humanTraits: traits,
+        cpuBuilds: [{ loadout: emptyLoadout, traits }],
+        teamIds: [0, 1],
+        defaultCpuDifficulty: 'normal',
+        cpuDifficulties: ['easy', 'hard'],
+      }),
+    ).toThrow(/cpuDifficulties/)
   })
 })

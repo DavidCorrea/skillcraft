@@ -1,4 +1,4 @@
-import type { StatusTag } from './types'
+import type { StatusReactionKey, StatusTag } from './types'
 
 /** Kept in sync with reactions.ts vuln bumps. */
 export const VULN_CAP = 5
@@ -140,3 +140,8 @@ export const reactionMessages = {
   tar: 'Tar: fire clings to slowed steps.',
   stagger: 'Stagger: shock locks up weary legs.',
 } as const
+
+export interface StatusReactionMessage {
+  text: string
+  key: StatusReactionKey
+}

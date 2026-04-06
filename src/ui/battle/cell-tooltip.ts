@@ -23,6 +23,12 @@ const STATUS_LABEL: Record<StatusInstance['tag']['t'], string> = {
 
 export const battleActorLabel = actorLabelForLog
 
+/** Combatant strip + log filter label: callsign, with "(You)" for the human player. */
+export function battlePanelLabel(state: GameState, id: ActorId): string {
+  const base = actorLabelForLog(state, id)
+  return id === state.humanActorId ? `${base} (You)` : base
+}
+
 function formatStatusSummary(statuses: StatusInstance[]): string {
   if (statuses.length === 0) return ''
   const parts = statuses.map((s) => STATUS_LABEL[s.tag.t])
@@ -56,7 +62,8 @@ export function describeBattleCellTooltip(state: GameState, coord: Coord): strin
     const owner = battleActorLabel(state, hazard.owner)
     const n = hazard.turnsRemaining
     const turnWord = n === 1 ? 'turn' : 'turns'
-    lines.push(`Lingering: ${def.name} · ${n} ${turnWord} · ${owner}`)
+    lines.push(`Lingering: ${def.name}`)
+    lines.push(`${n} ${turnWord} · ${owner}`)
   }
 
   if (lines.length === 0) return null
