@@ -2,7 +2,6 @@ import type { SkillId, SkillLoadoutEntry, TraitPoints } from './types'
 import { defaultTraitPoints } from './traits'
 import {
   fitPlayerBudgetToLevel,
-  getSkillDef,
   maxSkillsForLevel,
   totalLoadoutPoints,
   validateLoadout,
@@ -30,7 +29,6 @@ type MinEntryOpts = { rangeTier?: number; aoeTier?: number }
  * Default single-cell patterns keep presets compact; larger AoE can clip allies.
  */
 function minEntry(skillId: SkillId, opts?: MinEntryOpts): SkillLoadoutEntry {
-  const def = getSkillDef(skillId)
   const rt = Math.max(0, Math.floor(opts?.rangeTier ?? 0))
   const at = Math.max(0, Math.floor(opts?.aoeTier ?? 0))
   return {

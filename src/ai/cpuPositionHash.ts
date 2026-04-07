@@ -74,12 +74,18 @@ function mixStatusTag(h: bigint, tag: StatusTag): bigint {
       return mixInt(mixInt(h, 10), tag.duration)
     case 'silenced':
       return mixInt(mixInt(h, 11), tag.duration)
+    case 'disarmed':
+      return mixInt(mixInt(h, 15), tag.duration)
     case 'regenBlocked':
       return mixInt(mixInt(h, 12), tag.duration)
     case 'muddy':
       return mixInt(mixInt(h, 13), tag.duration)
     case 'shield':
       return mixInt(mixInt(h, 14), tag.amount)
+    case 'skillFocus':
+      return mixInt(mixInt(h, 16), tag.bonus)
+    case 'immunized':
+      return mixInt(mixInt(h, 17), tag.charges)
   }
 }
 
