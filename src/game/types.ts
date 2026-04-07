@@ -45,22 +45,20 @@ export interface TraitPoints {
   agility: number
   /** +1 mana at start of your turn per point (base +1/turn). */
   intelligence: number
-  /** Melee strike damage scaling. */
+  /** Bonus damage on each hit of physical damage skills (Strike, Splinter, …). */
   strength: number
-  /** Bleed potency/duration from strikes. */
+  /** Extra bleeding DoT/duration on each physical damage hit (before skill-specific statuses). */
   bleedBonus: number
-  /** Heal this much HP on each successful Strike (1 pt = 1 HP). */
-  meleeLifesteal: number
-  /** If ≥1, Strike pushes the enemy one tile away when that cell is free. */
-  strikeKnockback: number
-  /** If ≥1, Strike applies slowed (duration scales with points). */
-  strikeSlow: number
-  /** Flat damage reduction when hit by an attacker in an adjacent cell. */
-  meleeDuelReduction: number
-  /** Bonus Strike damage if you moved ≤1 tile this turn. */
-  strikeTempo: number
-  /** Bonus Strike damage on every 2nd consecutive Strike (move/cast breaks the chain). */
-  strikeRhythm: number
+  /** Heal this much HP after a physical damage cast that hit at least one valid target (1 pt = 1 HP). */
+  physicalLifesteal: number
+  /** If ≥1, physical damage skills (except Shove) may push the target one tile when that cell is free. */
+  physicalKnockback: number
+  /** If ≥1, physical damage hits apply slowed; duration scales with points. */
+  physicalSlow: number
+  /** Bonus damage on physical damage skills if you moved ≤1 tile this turn. */
+  physicalTempo: number
+  /** Bonus on every 2nd consecutive physical offense (Strike or physical damage skill); move or magic breaks the chain. */
+  physicalRhythm: number
   /** +max HP per point (see traits.ts HP_PER_VITALITY). */
   vitality: number
   /** +max mana per point beyond level (see traits.ts MANA_PER_WISDOM). */
@@ -71,10 +69,8 @@ export interface TraitPoints {
   tenacity: number
   /** +1 base skill range per 2 points (see traits.effectiveSkillRange). */
   arcaneReach: number
-  /** Flat reduction to physical Strike damage (after duel reduction). */
+  /** Flat reduction to physical damage (toughness + armor in one stat). */
   fortitude: number
-  /** Flat reduction vs Strikes and physical skills (after fortitude). */
-  physicalArmor: number
   /** Bonus to elemental skill damage after defense (per hit). */
   spellFocus: number
   /** Stronger skill-applied DoTs, shock vuln, and durations. */
@@ -99,7 +95,7 @@ export interface ActorState {
   /** Spent on skills; regens each turn up to maxMana. */
   mana: number
   maxMana: number
-  /** Spent on Move and Strike; regens each turn up to maxStamina. */
+  /** Spent on Move and physical-school casts; regens each turn up to maxStamina. */
   stamina: number
   maxStamina: number
   traits: TraitPoints
@@ -107,7 +103,7 @@ export interface ActorState {
   moveMaxSteps: number
   /** Mana gained at start of your turn (1 + intelligence). */
   manaRegenPerTurn: number
-  /** Orthogonal tiles moved this turn (reset at turn start). Used for Strike tempo. */
+  /** Orthogonal tiles moved this turn (reset at turn start). Used for physical tempo. */
   tilesMovedThisTurn: number
   /** Consecutive physical offense casts without a reset (move or magic cast); utility physical does not change this. */
   physicalStreak: number

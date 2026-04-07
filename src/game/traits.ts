@@ -31,12 +31,11 @@ export function defaultTraitPoints(): TraitPoints {
     intelligence: 0,
     strength: 0,
     bleedBonus: 0,
-    meleeLifesteal: 0,
-    strikeKnockback: 0,
-    strikeSlow: 0,
-    meleeDuelReduction: 0,
-    strikeTempo: 0,
-    strikeRhythm: 0,
+    physicalLifesteal: 0,
+    physicalKnockback: 0,
+    physicalSlow: 0,
+    physicalTempo: 0,
+    physicalRhythm: 0,
     vitality: 0,
     wisdom: 0,
     regeneration: 0,
@@ -51,7 +50,6 @@ export function defaultTraitPoints(): TraitPoints {
     defenseWind: 0,
     defenseEarth: 0,
     defenseArcane: 0,
-    physicalArmor: 0,
     spellFocus: 0,
     statusPotency: 0,
   }
@@ -116,20 +114,9 @@ export function elementalSkillDamageDealt(
   return Math.max(1, raw - defenseForElement(defender, element) + f)
 }
 
-/**
- * Physical skill damage (Splinter): adjacent duel, fortitude, physical armor. Not vs elemental defense.
- */
-export function physicalSkillDamageDealt(
-  raw: number,
-  defender: TraitPoints,
-  attackerAdjacent: boolean,
-): number {
-  let n = raw
-  if (attackerAdjacent) {
-    n = Math.max(1, n - defender.meleeDuelReduction)
-  }
-  n = Math.max(1, n - defender.fortitude - defender.physicalArmor)
-  return n
+/** Physical damage after fortitude (minimum 1). */
+export function physicalDamageDealt(raw: number, defender: TraitPoints): number {
+  return Math.max(1, raw - defender.fortitude)
 }
 
 /** Base skill range + bonus from Arcane reach trait. */
@@ -137,12 +124,9 @@ export function effectiveSkillRange(baseRange: number, traits: TraitPoints): num
   return baseRange + Math.floor(traits.arcaneReach / 2)
 }
 
-/** Strike is always adjacent: duel reduction then fortitude then physical armor. */
+/** Same as {@link physicalDamageDealt}; name kept where the attack is explicitly Strike. */
 export function physicalStrikeDamageDealt(raw: number, defenderTraits: TraitPoints): number {
-  let n = raw
-  n = Math.max(1, n - defenderTraits.meleeDuelReduction)
-  n = Math.max(1, n - defenderTraits.fortitude - defenderTraits.physicalArmor)
-  return n
+  return physicalDamageDealt(raw, defenderTraits)
 }
 
 /** Max HP before vitality bonus. */
@@ -162,23 +146,41 @@ export function strikeDamage(strength: number): number {
 }
 
 /**
- * Total physical Strike damage before adjacent duel reduction and fortitude.
- * `physicalStreakBefore` is the attacker's streak before this Strike lands.
+ * Raw damage for one pattern hit of a physical damage skill (Strike, Splinter, Cleave, …).
+ * Uses the skill’s base damage, Strength, physical tempo (≤1 tile moved this turn), and physical rhythm
+ * (2nd / 4th … physical offense hit without a move or magic cast in between).
+ */
+export function physicalOffenseDamagePerHit(
+  skillBaseDamage: number,
+  traits: TraitPoints,
+  tilesMovedThisTurn: number,
+  physicalStreakBefore: number,
+): number {
+  let n = Math.max(1, skillBaseDamage + traits.strength * DAMAGE_PER_STRENGTH)
+  if (tilesMovedThisTurn <= 1) n += traits.physicalTempo
+  const nextStreak = physicalStreakBefore + 1
+  if (nextStreak >= 2 && nextStreak % 2 === 0) n += traits.physicalRhythm
+  return Math.max(1, n)
+}
+
+/** One hit of residual tile damage from a physical skill — Strength only (no tempo / rhythm). */
+export function physicalLingeringHitRaw(skillBaseDamage: number, traits: TraitPoints): number {
+  return Math.max(1, skillBaseDamage + traits.strength * DAMAGE_PER_STRENGTH)
+}
+
+/**
+ * Total physical Strike damage before defender fortitude mitigation.
+ * `physicalStreakBefore` is the attacker’s streak before this Strike lands.
  */
 export function totalStrikeDamage(
   traits: TraitPoints,
   tilesMovedThisTurn: number,
   physicalStreakBefore: number,
 ): number {
-  const base = strikeDamage(traits.strength)
-  let bonus = 0
-  if (tilesMovedThisTurn <= 1) bonus += traits.strikeTempo
-  const nextStreak = physicalStreakBefore + 1
-  if (nextStreak >= 2 && nextStreak % 2 === 0) bonus += traits.strikeRhythm
-  return Math.max(1, base + bonus)
+  return physicalOffenseDamagePerHit(STRIKE_BASE_DAMAGE, traits, tilesMovedThisTurn, physicalStreakBefore)
 }
 
-/** Physical bleed from melee; scales with bleedBonus trait and attacker status potency. */
+/** Bleeding from physical damage hits; scales with bleed bonus and attacker status potency. */
 export function buildBleedingTag(bleedBonus: number, statusPotency = 0): StatusTag {
   const b = Math.max(0, bleedBonus)
   const p = Math.max(0, statusPotency)
@@ -189,8 +191,8 @@ export function buildBleedingTag(bleedBonus: number, statusPotency = 0): StatusT
   }
 }
 
-/** Slow from Strike; only meaningful if strikeSlow ≥ 1. */
-export function buildSlowTag(strikeSlow: number): StatusTag {
-  const s = Math.max(1, strikeSlow)
+/** Slow from physical slow trait; only meaningful if trait points ≥ 1. */
+export function buildSlowTag(slowTraitPoints: number): StatusTag {
+  const s = Math.max(1, slowTraitPoints)
   return { t: 'slowed', duration: 1 + s }
 }

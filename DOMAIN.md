@@ -17,7 +17,7 @@ Skillcraft is a **grid tactics** game: actors take turns to **move**, **strike**
 
 ## Traits (`TraitPoints`)
 
-Allocated at loadout and **frozen at battle start**. They scale movement range, mana regen, melee and skill damage, defenses, status potency, max HP/mana, and Strike modifiers (knockback, slow, tempo, rhythm, lifesteal, duel reduction, etc.). Exact numbers live in `traits.ts` (e.g. `HP_PER_VITALITY`, `MANA_PER_WISDOM`).
+Allocated at loadout and **frozen at battle start**. They scale movement range, mana regen, melee and skill damage, defenses, status potency, max HP/mana, and physical modifiers (tempo, rhythm, knockback, slow, lifesteal, bleed, etc.). Exact numbers live in `traits.ts` (e.g. `HP_PER_VITALITY`, `MANA_PER_WISDOM`).
 
 ## Skills and loadout
 
@@ -112,7 +112,7 @@ Overlapping triples (e.g. soaked + chilled + shock) resolve in this order: flash
 Optional match rules (`MatchSettings.overtimeEnabled`, `roundsUntilOvertime`): after **N full rounds** (each living fighter has taken one turn per round, `fullRoundsCompleted`), **sudden death** activates if enabled.
 
 - **Storm geometry** — Rolled once at activation (`rollStormActivation` in `overtime.ts`): a **storm center** near the board edge and a **safe radius** (Chebyshev distance from center). Cells outside that disk are **lethal** for storm purposes (`isOvertimeLethal`).
-- **Damage** — Storm ticks use `applyHpLoss`: **shield** is consumed first, then **HP**. Physical armor / fortitude do **not** apply. Damage amount scales with shrink steps (`STORM_BASE_DAMAGE`, `STORM_DAMAGE_INCREMENT` in `overtime.ts`).
+- **Damage** — Storm ticks use `applyHpLoss`: **shield** is consumed first, then **HP**. **Fortitude** (physical mitigation) does **not** apply. Damage amount scales with shrink steps (`STORM_BASE_DAMAGE`, `STORM_DAMAGE_INCREMENT` in `overtime.ts`).
 - **Cadence** — Storm damage does **not** hit every full-round boundary. The state alternates **skip** vs **strike** boundaries (`stormSkipsNextBoundary` on `OvertimeState`). On activation, the first boundary after overtime begins is a **skip** (no storm damage); after that, damage and skip alternate. **UI:** lethal tiles **pulse** when the **next** boundary will skip storm damage; **solid** red when the next boundary will apply it (`isOvertimeStormPulseRound`).
 - **Shrink** — The safe zone shrinks on a fixed schedule of overtime rounds (`SHRINK_EVERY_OT_ROUNDS` in `overtime.ts`). If a shrink-qualified round falls on a **skip** boundary, shrink is **deferred** to the next strike boundary (`deferredShrink`).
 - **Implementation** — `processFullRoundBoundary` in `engine.ts` drives activation, skip/strike, periodic storm vs shrink; helpers and geometry live in `overtime.ts`.

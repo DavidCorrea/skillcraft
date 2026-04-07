@@ -19,12 +19,12 @@ describe('deriveLoadoutBattleStats', () => {
     expect(pools.rows.find((r) => r.label === 'Max mana')!.value).toBe('8')
   })
 
-  it('includes strike rhythm preview on second chain', () => {
-    const t = { ...defaultTraitPoints(), strength: 1, strikeRhythm: 2 }
+  it('includes physical rhythm preview on second chain', () => {
+    const t = { ...defaultTraitPoints(), strength: 1, physicalRhythm: 2 }
     const g = deriveLoadoutBattleStats(t, 1)
-    const strike = g.find((x) => x.title === 'Strike damage (before their mitigations)')!
-    const base = Number(strike.rows.find((r) => r.label === 'Base (Strength)')!.value)
-    const r2 = Number(strike.rows.find((r) => r.label === '2nd-chain hit (rhythm)')!.value)
+    const phys = g.find((x) => x.title === 'Physical damage skills (before their mitigations)')!
+    const base = Number(phys.rows.find((r) => r.label === 'Strike base (2 + Strength)')!.value)
+    const r2 = Number(phys.rows.find((r) => r.label === '2nd-chain hit (rhythm)')!.value)
     expect(r2).toBeGreaterThan(base)
   })
 })
@@ -42,10 +42,10 @@ describe('derivedStatRowKeysAfterPlusOneOnTrait', () => {
     ).toBe(true)
   })
 
-  it('lists mitigation row when bumping melee duel reduction only', () => {
+  it('lists mitigation row when bumping fortitude only', () => {
     const t = defaultTraitPoints()
-    const keys = derivedStatRowKeysAfterPlusOneOnTrait(t, 10, 'meleeDuelReduction')
+    const keys = derivedStatRowKeysAfterPlusOneOnTrait(t, 10, 'fortitude')
     expect(keys.size).toBe(1)
-    expect([...keys][0]!.includes('Melee duel reduction')).toBe(true)
+    expect([...keys][0]!.includes('Fortitude')).toBe(true)
   })
 })

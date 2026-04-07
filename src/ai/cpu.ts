@@ -16,7 +16,12 @@ import {
   wardbreakShredAmount,
   wardShieldAmount,
 } from '../game/skills'
-import { physicalSkillDamageDealt, physicalStrikeDamageDealt, totalStrikeDamage } from '../game/traits'
+import {
+  physicalDamageDealt,
+  physicalOffenseDamagePerHit,
+  physicalStrikeDamageDealt,
+  totalStrikeDamage,
+} from '../game/traits'
 
 const WIN_SCORE = 1_000_000
 const LOSS_SCORE = -1_000_000
@@ -551,8 +556,13 @@ function tacticalPriority(state: GameState, actor: ActorId, action: GameAction):
       const t = state.actors[targetId]!
       if (t.hp <= 0) continue
       const chunk =
-        action.skillId === 'strike'
-          ? totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.physicalStreak) * hits
+        def.damageKind === 'physical'
+          ? physicalOffenseDamagePerHit(
+              def.baseDamage,
+              me.traits,
+              me.tilesMovedThisTurn,
+              me.physicalStreak,
+            ) * hits
           : damageForCast(def, hits)
       if (isOpponentActor(state.matchMode, state.teamByActor, actor, targetId)) {
         foeDmg += chunk
@@ -677,8 +687,13 @@ function approxAdjacentPhysicalThreat(
       max = Math.max(max, approxStrikeCastDamage(attacker, defender))
       continue
     }
-    const raw = damageForCast(def, 1)
-    const afterPhys = physicalSkillDamageDealt(raw, defender.traits, true)
+    const raw = physicalOffenseDamagePerHit(
+      def.baseDamage,
+      attacker.traits,
+      attacker.tilesMovedThisTurn,
+      attacker.physicalStreak,
+    )
+    const afterPhys = physicalDamageDealt(raw, defender.traits)
     max = Math.max(max, Math.max(1, afterPhys + extraVulnerabilityFlat(defender)))
   }
   return max

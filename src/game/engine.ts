@@ -66,15 +66,16 @@ import {
   buildBleedingTag,
   buildSlowTag,
   elementalSkillDamageDealt,
-  physicalSkillDamageDealt,
+  physicalDamageDealt,
   physicalStrikeDamageDealt,
   BASE_MAX_HP,
   HP_PER_VITALITY,
   MANA_PER_WISDOM,
   maxStaminaForTraits,
+  physicalLingeringHitRaw,
+  physicalOffenseDamagePerHit,
   STAMINA_MOVE_COST_PER_TILE,
   STAMINA_REGEN_PER_TURN,
-  totalStrikeDamage,
 } from './traits'
 import { cloneTag, resolveStatusesAfterAdd } from './reactions'
 
@@ -339,7 +340,10 @@ function applyImpactsOnEnter(
   const dmgKind = def.damageKind ?? 'elemental'
   const moverLabel = actorLabelForLog(state, moverId)
 
-  const rawDamage = damageForCast(def, 1)
+  const rawDamage =
+    dmgKind === 'physical'
+      ? physicalLingeringHitRaw(def.baseDamage, owner.traits)
+      : damageForCast(def, 1)
   let dmg = 0
   let next = state
 
@@ -355,11 +359,7 @@ function applyImpactsOnEnter(
     dmg = Math.max(1, dmg)
     next = applyHpLoss(next, moverId, dmg)
   } else if (dmgKind === 'physical') {
-    const afterPhys = physicalSkillDamageDealt(
-      rawDamage,
-      victimBefore.traits,
-      manhattan(owner.pos, victimBefore.pos) === 1,
-    )
+    const afterPhys = physicalDamageDealt(rawDamage, victimBefore.traits)
     dmg = damageWithShock(afterPhys, victimBefore)
     dmg += vulnerabilityFlat(victimBefore)
     dmg = Math.max(1, dmg)
@@ -922,10 +922,10 @@ function applyKnockbackFromAttacker(
   state: GameState,
   strikerId: ActorId,
   enemyId: ActorId,
-  requireStrikeTrait: boolean,
+  requireKnockbackTrait: boolean,
 ): { state: GameState; hazardEntries: BattleLogEntry[]; knockedBack: boolean } {
   const striker = state.actors[strikerId]
-  if (requireStrikeTrait && striker.traits.strikeKnockback < 1) {
+  if (requireKnockbackTrait && striker.traits.physicalKnockback < 1) {
     return { state, hazardEntries: [], knockedBack: false }
   }
   const enemy = state.actors[enemyId]
@@ -1478,8 +1478,13 @@ export function applyAction(
   for (const { targetId, hits } of hitList) {
     const enemy = next.actors[targetId]!
     const rawDamage =
-      offensiveSkillId === 'strike'
-        ? totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.physicalStreak) * hits
+      dmgKind === 'physical'
+        ? physicalOffenseDamagePerHit(
+            def.baseDamage,
+            me.traits,
+            me.tilesMovedThisTurn,
+            me.physicalStreak,
+          ) * hits
         : damageForCast(def, hits)
     let dmg = 0
     if (dmgKind === 'elemental') {
@@ -1503,11 +1508,7 @@ export function applyAction(
         next = applyHpLoss(next, targetId, dmg)
         continue
       }
-      const afterPhys = physicalSkillDamageDealt(
-        rawDamage,
-        enemy.traits,
-        manhattan(me.pos, enemy.pos) === 1,
-      )
+      const afterPhys = physicalDamageDealt(rawDamage, enemy.traits)
       dmg = damageWithShock(afterPhys, enemy)
       dmg += vulnerabilityFlat(enemy)
       dmg = Math.max(1, dmg + skillFocusFlat)
@@ -1593,9 +1594,10 @@ export function applyAction(
     },
   ]
 
-  if (offensiveSkillId === 'strike') {
-    const strikerTraits = next.actors[actor]!.traits
-    const casterLabel = actorLabelForLog(next, actor)
+  const casterLabel = actorLabelForLog(next, actor)
+
+  if (dmgKind === 'physical') {
+    const physTraits = next.actors[actor]!.traits
     for (const { targetId } of hitList) {
       if (
         !canDamageTarget(next.matchMode, next.friendlyFire, next.teamByActor, actor, targetId)
@@ -1604,30 +1606,32 @@ export function applyAction(
       }
       const t = next.actors[targetId]!
       if (t.hp <= 0) continue
-      const bleedTag = buildBleedingTag(strikerTraits.bleedBonus, strikerTraits.statusPotency)
+      const bleedTag = buildBleedingTag(physTraits.bleedBonus, physTraits.statusPotency)
       const afterBleed = addStatusToTarget(next, targetId, bleedTag)
       next = afterBleed.state
       castEntries = [...castEntries, ...statusReactionEntries(targetId, afterBleed.messages)]
-      if (strikerTraits.strikeSlow >= 1) {
-        const slowTag = buildSlowTag(strikerTraits.strikeSlow)
+      if (physTraits.physicalSlow >= 1) {
+        const slowTag = buildSlowTag(physTraits.physicalSlow)
         const afterSlow = addStatusToTarget(next, targetId, slowTag)
         next = afterSlow.state
         castEntries = [...castEntries, ...statusReactionEntries(targetId, afterSlow.messages)]
       }
-      const kb = applyKnockbackFromAttacker(next, actor, targetId, true)
-      next = kb.state
-      if (kb.knockedBack) {
-        castEntries.push({
-          text: `${casterLabel} knocks ${actorLabelForLog(next, targetId)} back.`,
-          subject: actor,
-          detail: { kind: 'knockback', attackerId: actor, targetId },
-        })
+      if (offensiveSkillId !== 'shove') {
+        const kb = applyKnockbackFromAttacker(next, actor, targetId, true)
+        next = kb.state
+        if (kb.knockedBack) {
+          castEntries.push({
+            text: `${casterLabel} knocks ${actorLabelForLog(next, targetId)} back.`,
+            subject: actor,
+            detail: { kind: 'knockback', attackerId: actor, targetId },
+          })
+        }
+        castEntries.push(...kb.hazardEntries)
       }
-      castEntries.push(...kb.hazardEntries)
     }
-    const heal = strikerTraits.meleeLifesteal
-    if (heal > 0) {
+    if (physTraits.physicalLifesteal > 0) {
       const cur = next.actors[actor]!
+      const heal = physTraits.physicalLifesteal
       next = withActor(next, actor, { ...cur, hp: Math.min(cur.maxHp, cur.hp + heal) })
       castEntries.push({
         text: `${casterLabel} heals ${heal} from lifesteal.`,
@@ -1635,7 +1639,9 @@ export function applyAction(
         detail: { kind: 'lifesteal', actorId: actor, amount: heal },
       })
     }
-  } else {
+  }
+
+  if (offensiveSkillId !== 'strike') {
     const tag = buildStatusForSkill(action.skillId, entry.statusStacks, me.traits.statusPotency)
     for (const { targetId } of hitList) {
       const afterStatus = addStatusToTarget(next, targetId, tag)

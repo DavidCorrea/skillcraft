@@ -65,16 +65,14 @@ function mergeExtraTraits(base: TraitPoints, extraCount: number): TraitPoints {
 const PRI_MELEE: (keyof TraitPoints)[] = [
   'strength',
   'vitality',
-  'strikeTempo',
+  'physicalTempo',
   'fortitude',
-  'physicalArmor',
   'agility',
-  'meleeDuelReduction',
   'bleedBonus',
-  'strikeRhythm',
-  'meleeLifesteal',
-  'strikeKnockback',
-  'strikeSlow',
+  'physicalRhythm',
+  'physicalLifesteal',
+  'physicalKnockback',
+  'physicalSlow',
   'regeneration',
   'tenacity',
 ]
@@ -111,7 +109,6 @@ const PRI_DOT: (keyof TraitPoints)[] = [
 const PRI_TANK: (keyof TraitPoints)[] = [
   'vitality',
   'fortitude',
-  'physicalArmor',
   'tenacity',
   'regeneration',
   'wisdom',
@@ -120,7 +117,6 @@ const PRI_TANK: (keyof TraitPoints)[] = [
   'defenseWater',
   'defenseElectric',
   'defenseArcane',
-  'meleeDuelReduction',
   'strength',
 ]
 
@@ -128,7 +124,7 @@ const PRI_SKIRMISH: (keyof TraitPoints)[] = [
   'agility',
   'intelligence',
   'spellFocus',
-  'strikeTempo',
+  'physicalTempo',
   'strength',
   'vitality',
   'arcaneReach',
@@ -149,7 +145,7 @@ const PRI_BALANCED: (keyof TraitPoints)[] = [
   'statusPotency',
   'fortitude',
   'regeneration',
-  'strikeTempo',
+  'physicalTempo',
 ]
 
 const PRI_CONTROL: (keyof TraitPoints)[] = [

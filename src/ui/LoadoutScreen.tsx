@@ -162,10 +162,48 @@ function defaultSkillConfig(): SkillConfig {
   }
 }
 
+/** Merge saved traits with current schema; map legacy trait keys from older saves. */
+function migrateTraitPoints(input: unknown): TraitPoints {
+  const t = defaultTraitPoints()
+  if (!input || typeof input !== 'object') return t
+  const o = input as Record<string, unknown>
+  for (const key of Object.keys(t) as (keyof TraitPoints)[]) {
+    const v = o[key as string]
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      ;(t as Record<string, number>)[key] = Math.max(0, Math.floor(v))
+    }
+  }
+  if (!('physicalTempo' in o) && typeof o.strikeTempo === 'number' && Number.isFinite(o.strikeTempo)) {
+    t.physicalTempo = Math.max(0, Math.floor(o.strikeTempo))
+  }
+  if (!('physicalRhythm' in o) && typeof o.strikeRhythm === 'number' && Number.isFinite(o.strikeRhythm)) {
+    t.physicalRhythm = Math.max(0, Math.floor(o.strikeRhythm))
+  }
+  if (!('physicalKnockback' in o) && typeof o.strikeKnockback === 'number' && Number.isFinite(o.strikeKnockback)) {
+    t.physicalKnockback = Math.max(0, Math.floor(o.strikeKnockback))
+  }
+  if (!('physicalSlow' in o) && typeof o.strikeSlow === 'number' && Number.isFinite(o.strikeSlow)) {
+    t.physicalSlow = Math.max(0, Math.floor(o.strikeSlow))
+  }
+  if (!('physicalLifesteal' in o) && typeof o.meleeLifesteal === 'number' && Number.isFinite(o.meleeLifesteal)) {
+    t.physicalLifesteal = Math.max(0, Math.floor(o.meleeLifesteal))
+  }
+  if (typeof o.meleeDuelReduction === 'number' && Number.isFinite(o.meleeDuelReduction)) {
+    t.fortitude += Math.max(0, Math.floor(o.meleeDuelReduction))
+  }
+  if (typeof o.physicalArmor === 'number' && Number.isFinite(o.physicalArmor)) {
+    t.fortitude += Math.max(0, Math.floor(o.physicalArmor))
+  }
+  return t
+}
+
 function loadStored(): Stored | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as Stored
+    if (raw) {
+      const p = JSON.parse(raw) as Stored
+      return { ...p, traits: migrateTraitPoints(p.traits) }
+    }
     const legacy = localStorage.getItem(LEGACY_STORAGE_KEY)
     if (legacy) {
       const p = JSON.parse(legacy) as StoredV4
@@ -290,25 +328,21 @@ function traitHint(
     case 'statusPotency':
       return 'Stronger skill DoTs, shock, and durations'
     case 'strength':
-      return `Strike base ${previewStrikeBase} · ~${previewStrikeWithTempo} w/ tempo (≤1 tile)`
+      return `Strike base ${previewStrikeBase} · ~${previewStrikeWithTempo} w/ physical tempo (≤1 tile)`
     case 'bleedBonus':
-      return 'Stronger Strike bleed'
-    case 'meleeLifesteal':
-      return 'Heal HP per Strike (1:1)'
-    case 'strikeKnockback':
-      return '≥1: Strike pushes 1 tile if clear'
-    case 'strikeSlow':
-      return '≥1: Strike applies slow (longer w/ pts)'
-    case 'meleeDuelReduction':
-      return 'Less from adjacent attackers'
+      return 'Stronger bleed on physical damage hits'
+    case 'physicalLifesteal':
+      return 'Heal HP after a physical hit cast (1:1)'
+    case 'physicalKnockback':
+      return '≥1: physical hits push 1 tile if clear (not Shove)'
+    case 'physicalSlow':
+      return '≥1: physical hits apply slow (longer w/ pts)'
     case 'fortitude':
-      return 'Less from Strikes & physical skills (after duel)'
-    case 'physicalArmor':
-      return 'Less after fortitude (Strike & physical skills)'
-    case 'strikeTempo':
-      return `≤1 tile moved · ~${previewStrikeWithTempo} Strike`
-    case 'strikeRhythm':
-      return `2nd-hit Strike ${previewStrikeRhythm2} · also 4th, 6th…`
+      return 'Less physical damage (toughness + armor)'
+    case 'physicalTempo':
+      return `≤1 tile moved · ~${previewStrikeWithTempo} per physical hit`
+    case 'physicalRhythm':
+      return `2nd physical hit ${previewStrikeRhythm2} · also 4th, 6th…`
     case 'defenseFire':
     case 'defenseIce':
     case 'defenseWater':
@@ -317,7 +351,7 @@ function traitHint(
     case 'defenseWind':
     case 'defenseEarth':
     case 'defenseArcane':
-      return 'Less matching skill damage; not Strikes (min 1)'
+      return 'Less matching elemental skill damage (min 1)'
     default:
       return `${String(key)} · 0–${maxTraitPool}`
   }
@@ -358,10 +392,7 @@ export function LoadoutScreen({
     }
     return Object.fromEntries(SKILL_ROSTER.map((s) => [s.id, defaultSkillConfig()]))
   })
-  const [traits, setTraits] = useState<TraitPoints>(() => ({
-    ...defaultTraitPoints(),
-    ...stored?.traits,
-  }))
+  const [traits, setTraits] = useState<TraitPoints>(() => migrateTraitPoints(stored?.traits))
   const [configureSkillId, setConfigureSkillId] = useState<string | null>(null)
   /** Bumps when applying "Randomize everything" so SkillLoadoutGrid remounts and picks a fresh preview anchor. */
   const [loadoutGridNonce, setLoadoutGridNonce] = useState(0)

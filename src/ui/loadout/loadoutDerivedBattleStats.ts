@@ -1,4 +1,5 @@
 import type { TraitPoints } from '../../game/types'
+import { getSkillDef } from '../../game/skills'
 import {
   BASE_MAX_HP,
   buildBleedingTag,
@@ -7,6 +8,7 @@ import {
   HP_PER_VITALITY,
   MANA_PER_WISDOM,
   maxStaminaForTraits,
+  physicalOffenseDamagePerHit,
   STRIKE_BASE_DAMAGE,
   STAMINA_BASE_MAX,
   STAMINA_MAX_PER_AGILITY,
@@ -28,7 +30,7 @@ export type DerivedBattleStatGroup = {
 }
 
 /** Row label names the element. */
-const ELEM_RESIST_LEGEND = '+1/pt vs matching skills; min 1; not Strikes'
+const ELEM_RESIST_LEGEND = '+1/pt vs matching skills; min 1'
 
 /**
  * Battle-facing numbers derived from loadout traits, for the traits dock.
@@ -41,13 +43,14 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
   const maxHp = BASE_MAX_HP + traits.vitality * HP_PER_VITALITY
   const maxMana = level + traits.wisdom * MANA_PER_WISDOM
   const strikeBase = strikeDamage(traits.strength)
-  const strikeTempo = totalStrikeDamage(traits, 0, 0)
-  const strikeRhythm2 = totalStrikeDamage(traits, 0, 1)
+  const physicalTempoPreview = totalStrikeDamage(traits, 0, 0)
+  const physicalRhythmSecondHit = totalStrikeDamage(traits, 0, 1)
+  const splinterPerHit = physicalOffenseDamagePerHit(getSkillDef('splinter').baseDamage, traits, 0, 0)
   const reachBonus = Math.floor(traits.arcaneReach / 2)
   const bleedTag = buildBleedingTag(traits.bleedBonus, traits.statusPotency)
   const bleedLine =
     bleedTag.t === 'bleeding' ? `${bleedTag.dot} / ${bleedTag.duration}t` : '—'
-  const slowTag = traits.strikeSlow >= 1 ? buildSlowTag(traits.strikeSlow) : null
+  const slowTag = traits.physicalSlow >= 1 ? buildSlowTag(traits.physicalSlow) : null
   const slowLine = slowTag?.t === 'slowed' ? `${slowTag.duration}t` : '—'
 
   return [
@@ -107,47 +110,53 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
       ],
     },
     {
-      title: 'Strike damage (before their mitigations)',
+      title: 'Physical damage skills (before their mitigations)',
       rows: [
         {
-          label: 'Base (Strength)',
+          label: 'Strike base (2 + Strength)',
           value: String(strikeBase),
-          perPoint: `+${DAMAGE_PER_STRENGTH}/Strength (base ${STRIKE_BASE_DAMAGE})`,
+          perPoint: `+${DAMAGE_PER_STRENGTH}/Strength on each physical hit (skill base + STR)`,
         },
         {
-          label: 'With tempo (≤1 tile moved)',
-          value: String(strikeTempo),
-          perPoint: '+1/Strike tempo when ≤1 tile moved',
+          label: 'Splinter / hit (example)',
+          value: String(splinterPerHit),
+          perPoint: 'Same Strength, tempo, rhythm as Strike; skill base differs',
+        },
+        {
+          label: 'Physical tempo (≤1 tile moved)',
+          value: String(physicalTempoPreview),
+          perPoint: '+1/Physical tempo when ≤1 tile moved (all physical damage skills)',
         },
         {
           label: '2nd-chain hit (rhythm)',
-          value: String(strikeRhythm2),
-          perPoint: '+1/Strike rhythm on 2nd, 4th… physical hit',
+          value: String(physicalRhythmSecondHit),
+          perPoint: '+1/Physical rhythm on 2nd, 4th… physical offense',
         },
       ],
     },
     {
-      title: 'Strike on-hit',
+      title: 'Physical damage on-hit',
       rows: [
         {
           label: 'Bleed DoT / duration',
           value: bleedLine,
-          perPoint: 'Bleed bonus + Status potency',
+          perPoint: 'Bleed bonus + Status potency (every physical hit)',
         },
         {
           label: 'Slowed duration',
           value: slowLine,
-          perPoint: traits.strikeSlow >= 1 ? '+1 turn duration per Strike slow' : '≥1 Strike slow to apply',
+          perPoint:
+            traits.physicalSlow >= 1 ? '+1 turn duration per Physical slow' : '≥1 Physical slow to apply',
         },
         {
           label: 'Knockback',
-          value: traits.strikeKnockback >= 1 ? 'On' : 'Off',
-          perPoint: '≥1 Strike knockback',
+          value: traits.physicalKnockback >= 1 ? 'On' : 'Off',
+          perPoint: '≥1 Physical knockback (not Shove)',
         },
         {
-          label: 'Lifesteal / Strike',
-          value: String(traits.meleeLifesteal),
-          perPoint: '+1 HP/Strike per Melee lifesteal',
+          label: 'Lifesteal / cast',
+          value: String(traits.physicalLifesteal),
+          perPoint: '+1 HP per physical damage cast that hits',
         },
       ],
     },
@@ -175,19 +184,9 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
       title: 'Physical mitigation',
       rows: [
         {
-          label: 'Melee duel reduction',
-          value: String(traits.meleeDuelReduction),
-          perPoint: '+1 vs adjacent hits per point',
-        },
-        {
           label: 'Fortitude',
           value: String(traits.fortitude),
-          perPoint: '+1 vs Strike & physical skill after duel',
-        },
-        {
-          label: 'Physical armor',
-          value: String(traits.physicalArmor),
-          perPoint: '+1 after Fortitude per point',
+          perPoint: '+1 vs physical damage per point',
         },
       ],
     },

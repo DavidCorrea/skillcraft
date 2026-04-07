@@ -1,9 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   canSelectLoadoutPreviewAnchor,
   defaultPreviewAnchor,
   randomPreviewAnchorInRange,
 } from './skillLoadoutPreviewAnchor'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('canSelectLoadoutPreviewAnchor', () => {
   it('allows feet (distance 0) when min cast range is 1', () => {
@@ -26,12 +30,12 @@ describe('randomPreviewAnchorInRange', () => {
     const boardSize = 7
     const allowed = new Set(['3,2', '3,4', '2,3', '4,3'])
 
+    const rnd = vi.spyOn(Math, 'random')
     for (let i = 0; i < 20; i++) {
-      vi.spyOn(Math, 'random').mockReturnValue((i % 10) / 10)
+      rnd.mockReturnValue((i % 10) / 10)
       const c = randomPreviewAnchorInRange(you, 1, 1, boardSize)
       expect(allowed.has(`${c.x},${c.y}`)).toBe(true)
     }
-    vi.restoreAllMocks()
   })
 
   it('with min 0 max 2, may pick distance 2', () => {

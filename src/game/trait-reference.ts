@@ -12,7 +12,7 @@ export type TraitRefEntry = {
 
 /** One line for elemental resist traits (label names the element). */
 function resistVsSkills(element: string): string {
-  return `Less ${element} skill damage per point (min 1). Not vs Strikes.`
+  return `Less ${element} skill damage per point (min 1).`
 }
 
 /** Static guide copy for loadout traits — mirrors `TraitPoints` / loadout UI. */
@@ -42,43 +42,43 @@ export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] =
         key: 'strength',
         short: 'STR',
         label: 'Strength',
-        description: 'Strike base damage (before tempo, rhythm, and defender mitigations).',
+        description: 'Extra damage on each hit of physical damage skills (before tempo, rhythm, mitigations).',
       },
       {
         key: 'bleedBonus',
         short: 'BLD',
         label: 'Bleed bonus',
-        description: 'Stronger bleed DoT and duration on Strike.',
+        description: 'Stronger bleed DoT and duration on each physical damage hit.',
       },
       {
-        key: 'meleeLifesteal',
+        key: 'physicalLifesteal',
         short: 'LS',
-        label: 'Melee lifesteal',
-        description: 'Heal this much HP per Strike (1 point = 1 HP).',
+        label: 'Physical lifesteal',
+        description: 'Heal this much HP after a physical damage cast that hits (1 point = 1 HP).',
       },
       {
-        key: 'strikeKnockback',
+        key: 'physicalKnockback',
         short: 'KB',
-        label: 'Strike knockback',
-        description: 'At ≥1: Strike pushes one tile if that cell is free.',
+        label: 'Physical knockback',
+        description: 'At ≥1: physical hits (not Shove) push one tile if that cell is free.',
       },
       {
-        key: 'strikeSlow',
+        key: 'physicalSlow',
         short: 'SLW',
-        label: 'Strike slow',
-        description: 'At ≥1: Strike applies slow; duration scales with points.',
+        label: 'Physical slow',
+        description: 'At ≥1: physical damage hits apply slow; duration scales with points.',
       },
       {
-        key: 'strikeTempo',
+        key: 'physicalTempo',
         short: 'TMP',
-        label: 'Strike tempo',
-        description: 'Bonus Strike damage per point if you moved ≤1 tile this turn.',
+        label: 'Physical tempo',
+        description: 'Bonus physical skill damage per point if you moved ≤1 tile this turn.',
       },
       {
-        key: 'strikeRhythm',
+        key: 'physicalRhythm',
         short: 'RHY',
-        label: 'Strike rhythm',
-        description: 'Bonus on every 2nd consecutive Strike; move or magic breaks the chain.',
+        label: 'Physical rhythm',
+        description: 'Bonus on every 2nd consecutive physical offense; move or magic breaks the chain.',
       },
     ],
   },
@@ -104,22 +104,10 @@ export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] =
         description: 'Subtract from each burn, poison, and bleed tick.',
       },
       {
-        key: 'meleeDuelReduction',
-        short: 'DRL',
-        label: 'Melee duel reduction',
-        description: 'Less damage from adjacent attackers (before fortitude and armor).',
-      },
-      {
         key: 'fortitude',
         short: 'FOR',
         label: 'Fortitude',
-        description: 'Less from Strikes and physical skills, after duel reduction.',
-      },
-      {
-        key: 'physicalArmor',
-        short: 'ARM',
-        label: 'Physical armor',
-        description: 'Less after fortitude (Strikes and physical skills).',
+        description: 'Less physical damage per point (toughness and armor combined).',
       },
       {
         key: 'defenseFire',

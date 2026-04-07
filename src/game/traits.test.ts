@@ -4,8 +4,11 @@ import {
   defaultTraitPoints,
   effectiveSkillRange,
   maxStaminaForTraits,
+  physicalLingeringHitRaw,
+  physicalOffenseDamagePerHit,
   shrinkOnePointFromTraits,
   strikeDamage,
+  STRIKE_BASE_DAMAGE,
   totalStrikeDamage,
   totalTraitPoints,
 } from './traits'
@@ -56,13 +59,33 @@ describe('strikeDamage', () => {
 
 describe('totalStrikeDamage', () => {
   it('adds tempo when movement this turn is at most 1', () => {
-    const t = { ...defaultTraitPoints(), strength: 1, strikeTempo: 2 }
+    const t = { ...defaultTraitPoints(), strength: 1, physicalTempo: 2 }
     expect(totalStrikeDamage(t, 0, 0)).toBeGreaterThan(totalStrikeDamage(t, 2, 0))
   })
 
   it('adds rhythm on even-numbered consecutive strikes', () => {
-    const t = { ...defaultTraitPoints(), strength: 0, strikeRhythm: 3 }
+    const t = { ...defaultTraitPoints(), strength: 0, physicalRhythm: 3 }
     expect(totalStrikeDamage(t, 0, 0)).toBe(strikeDamage(0))
     expect(totalStrikeDamage(t, 0, 1)).toBeGreaterThan(strikeDamage(0))
+  })
+})
+
+describe('physicalOffenseDamagePerHit', () => {
+  it('matches Strike when using the same base as STRIKE_BASE_DAMAGE', () => {
+    const t = { ...defaultTraitPoints(), strength: 2, physicalTempo: 1, physicalRhythm: 2 }
+    expect(physicalOffenseDamagePerHit(STRIKE_BASE_DAMAGE, t, 0, 1)).toBe(totalStrikeDamage(t, 0, 1))
+  })
+
+  it('scales non-Strike physical skills with Strength on top of skill base', () => {
+    const t0 = defaultTraitPoints()
+    const t1 = { ...defaultTraitPoints(), strength: 2 }
+    expect(physicalOffenseDamagePerHit(3, t1, 99, 0)).toBeGreaterThan(physicalOffenseDamagePerHit(3, t0, 99, 0))
+  })
+})
+
+describe('physicalLingeringHitRaw', () => {
+  it('adds Strength scaling without tempo or rhythm', () => {
+    const t = { ...defaultTraitPoints(), strength: 2, physicalTempo: 5, physicalRhythm: 5 }
+    expect(physicalLingeringHitRaw(3, t)).toBe(7)
   })
 })

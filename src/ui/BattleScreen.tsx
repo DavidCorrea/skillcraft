@@ -561,7 +561,7 @@ export function BattleScreen({
       ? `Up to ${game.actors[game.humanActorId]!.moveMaxSteps} steps per move (no diagonals).`
       : mode === 'cast' && castSkillId
         ? 'Amber outline = valid anchor. Dim = range only.'
-        : 'Select move, Strike, or a skill.')
+        : 'Select move, skip, or a skill.')
 
   const railTitle = game.tie
     ? { className: 'battle-surface__title is-end', text: 'TIE' }
@@ -777,7 +777,7 @@ export function BattleScreen({
         <aside className="battle-surface__edge battle-surface__edge--right" aria-label="Commands">
           <div className="bs-actions">
             <div className="bs-actions__group">
-              <span className="bs-actions__label">Phase</span>
+              <span className="bs-actions__label">Move &amp; skip</span>
               <button
                 type="button"
                 className={`bs-btn${mode === 'move' ? ' is-on' : ''}`}
@@ -789,21 +789,6 @@ export function BattleScreen({
                 }}
               >
                 Move
-              </button>
-              <button
-                type="button"
-                className={`bs-btn${mode === 'cast' && castSkillId === 'strike' ? ' is-on' : ''}`}
-                disabled={
-                  game.turn !== game.humanActorId || !!game.winner || game.tie || legalStrikeCasts.length === 0
-                }
-                title={
-                  legalStrikeCasts.length > 0
-                    ? 'Melee Strike (stamina) — pick a valid anchor like other skills'
-                    : 'Add Strike to loadout and stand adjacent to a valid target'
-                }
-                onClick={onStrikePlayer}
-              >
-                Strike
               </button>
               <button
                 type="button"
@@ -843,28 +828,44 @@ export function BattleScreen({
                 const blocked = silenced || disarmed
                 const canAfford = !blocked && curRes >= mMin
                 const costStr = mMin === mMax ? `${mMin}` : `${mMin}–${mMax}`
+                const isStrike = e.skillId === 'strike'
+                const strikeBlocked = isStrike && legalStrikeCasts.length === 0
                 return (
                   <button
                     key={e.skillId}
                     type="button"
                     className={`bs-btn${mode === 'cast' && castSkillId === e.skillId ? ' is-armed' : ''}${mode === 'cast' && castSkillId === e.skillId ? ' is-on' : ''}`}
                     aria-pressed={mode === 'cast' && castSkillId === e.skillId}
-                    disabled={game.turn !== game.humanActorId || !!game.winner || game.tie || !canAfford}
+                    disabled={
+                      game.turn !== game.humanActorId ||
+                      !!game.winner ||
+                      game.tie ||
+                      !canAfford ||
+                      strikeBlocked
+                    }
                     title={
                       silenced
                         ? 'Silenced — magic skills unavailable'
                         : disarmed
                           ? 'Disarmed — physical skills unavailable'
-                          : !canAfford
-                            ? `Need at least ${mMin} ${resShort}`
-                            : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
+                          : strikeBlocked
+                            ? 'No legal melee anchor — stand adjacent to a valid target'
+                            : !canAfford
+                              ? `Need at least ${mMin} ${resShort}`
+                              : isStrike
+                                ? `Melee Strike · ${costStr} ${resShort} · ${entryPointCost(e)} pts`
+                                : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
                     }
                     onClick={() => {
+                      if (isStrike) {
+                        onStrikePlayer()
+                        return
+                      }
                       setMode('cast')
                       setCastSkillId(e.skillId)
                     }}
                   >
-                    {def.name} · {costStr}
+                    {def.name} · {costStr} {resShort}
                   </button>
                 )
               })}

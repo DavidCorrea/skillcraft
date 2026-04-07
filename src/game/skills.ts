@@ -58,7 +58,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     school: 'physical',
     flavor: 'Steel, fist, or spur—whatever you bring, it bites at arm’s length.',
     effectsLine:
-      'Bleeding on hit (scales with Bleed bonus). Strike Slow, knockback, and lifesteal apply when you invest traits.',
+      'Bleeding on hit (scales with Bleed bonus). Physical slow, knockback, and lifesteal apply when you invest traits.',
     damageKind: 'physical',
   },
   {

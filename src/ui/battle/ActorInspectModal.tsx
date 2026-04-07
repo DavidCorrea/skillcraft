@@ -136,7 +136,7 @@ export function ActorInspectModal({
               </div>
               <p className="ls-modal__note ls-modal__note--tight actor-inspect__meta-line">
                 +{actor.manaRegenPerTurn} MP/turn · +{STAMINA_REGEN_PER_TURN} SP/turn · {actor.moveMaxSteps} move step
-                {actor.moveMaxSteps === 1 ? '' : 's'} · {actor.tilesMovedThisTurn} tiles moved this turn · strike streak{' '}
+                {actor.moveMaxSteps === 1 ? '' : 's'} · {actor.tilesMovedThisTurn} tiles moved this turn · physical streak{' '}
                 {actor.physicalStreak}
               </p>
             </section>
