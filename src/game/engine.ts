@@ -22,6 +22,7 @@ import {
   currentOvertimeDamageAmount,
   isOvertimeLethal,
   rollStormActivation,
+  FIRST_SHRINK_AT_OT_ROUNDS,
   SHRINK_EVERY_OT_ROUNDS,
 } from './overtime'
 import type { StatusReactionMessage } from './status-reference'
@@ -883,7 +884,9 @@ function processFullRoundBoundary(state: GameState): GameState {
   }
   const ot = s.overtime!
   if (ot.stormSkipsNextBoundary) {
-    const wouldShrink = ot.otRoundsCompleted > 0 && ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
+    const wouldShrink =
+      ot.otRoundsCompleted >= FIRST_SHRINK_AT_OT_ROUNDS &&
+      ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
     s = {
       ...s,
       overtime: {
@@ -895,7 +898,9 @@ function processFullRoundBoundary(state: GameState): GameState {
     return finalizeEliminations(s)
   }
 
-  const wouldShrink = ot.otRoundsCompleted > 0 && ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
+  const wouldShrink =
+    ot.otRoundsCompleted >= FIRST_SHRINK_AT_OT_ROUNDS &&
+    ot.otRoundsCompleted % SHRINK_EVERY_OT_ROUNDS === 0
   const doShrink = ot.deferredShrink || wouldShrink
   if (doShrink) {
     s = applyOvertimeShrink(s)

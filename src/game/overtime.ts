@@ -12,6 +12,12 @@ export const STORM_DAMAGE_INCREMENT = 2
 /** Shrink safe radius every N full rounds completed in overtime. */
 export const SHRINK_EVERY_OT_ROUNDS = 2
 
+/**
+ * First full-round count in overtime where shrink may run (must be after the preview skip and the
+ * first periodic storm tick, so `SHRINK_EVERY_OT_ROUNDS * 2` when preview alternates with damage).
+ */
+export const FIRST_SHRINK_AT_OT_ROUNDS = SHRINK_EVERY_OT_ROUNDS * 2
+
 const ROLL_MAX_ATTEMPTS = 80
 
 export function chebyshevDistance(a: Coord, b: Coord): number {
