@@ -53,7 +53,8 @@ describe('monteCarloRandomDuels', () => {
       cpuDifficulty: 'easy',
       randomCpuBuild,
       duelBattleConfig,
-      maxPlies: 15_000,
+      // Align with fixed duel cap; longer games after rule changes can hit 15k.
+      maxPlies: 25_000,
     })
 
     const winTotal =

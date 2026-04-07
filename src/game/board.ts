@@ -4,7 +4,7 @@ import type { ActorId, Coord, MatchMode } from './types'
 export const BOARD_SIZE = 7
 
 /** Max board dimension for multi-actor matches. */
-export const BOARD_MAX = 15
+export const BOARD_MAX = 19
 
 /**
  * Larger battles at higher level: 7×7 → 9×9 → 11×11.
@@ -17,7 +17,7 @@ export function boardSizeForLevel(level: number): number {
 }
 
 /**
- * Board size: duels use level curve; 3+ fighters bump toward larger grids; cap 15×15.
+ * Board size: duels use level curve; 3+ fighters bump toward larger grids; cap {@link BOARD_MAX}×{@link BOARD_MAX}.
  */
 export function boardSizeForMatch(level: number, actorCount: number, override?: number): number {
   if (override !== undefined) {
@@ -31,6 +31,9 @@ export function boardSizeForMatch(level: number, actorCount: number, override?: 
   if (actorCount >= 3) base = Math.max(base, 9)
   if (actorCount >= 4) base = Math.max(base, 11)
   if (actorCount >= 5) base = Math.max(base, 13)
+  if (actorCount >= 6) base = Math.max(base, 15)
+  if (actorCount >= 7) base = Math.max(base, 17)
+  if (actorCount >= 8) base = Math.max(base, 19)
   return Math.min(BOARD_MAX, base)
 }
 
@@ -66,6 +69,34 @@ export function cornerCells(size: number): Coord[] {
     { x: last, y: last },
     { x: 0, y: last },
   ]
+}
+
+/**
+ * Perimeter cells in clockwise order from NW, one step per cell (length `4 * size - 4` for size ≥ 2).
+ */
+export function perimeterCellsClockwise(size: number): Coord[] {
+  const last = size - 1
+  if (last < 1) return []
+  const out: Coord[] = []
+  for (let x = 0; x <= last; x++) out.push({ x, y: 0 })
+  for (let y = 1; y <= last; y++) out.push({ x: last, y })
+  for (let x = last - 1; x >= 0; x--) out.push({ x, y: last })
+  for (let y = last - 1; y >= 1; y--) out.push({ x: 0, y })
+  return out
+}
+
+/** `n` distinct perimeter coords, spaced evenly around the border (roster index order). */
+export function evenlySpacedPerimeterPositions(size: number, n: number): Coord[] {
+  const ring = perimeterCellsClockwise(size)
+  const L = ring.length
+  if (n <= 0 || n > L) {
+    throw new Error(`evenlySpacedPerimeterPositions: need 1–${L} fighters for size ${size}, got ${n}`)
+  }
+  const out: Coord[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(ring[Math.floor((i * L) / n)]!)
+  }
+  return out
 }
 
 export function manhattan(a: Coord, b: Coord): number {
@@ -127,7 +158,7 @@ export function isOpponentActor(
 
 /**
  * Spawn positions for all actors. Pass **roster order** (not shuffled initiative): two actors —
- * human south, other north; three or more — corners NW → NE → SE → SW in roster index order.
+ * human south, other north; 3–4 — corners NW → NE → SE → SW; 5+ — evenly spaced around the perimeter.
  */
 export function spawnPositionsForActors(
   size: number,
@@ -143,12 +174,20 @@ export function spawnPositionsForActors(
     return out
   }
 
-  const corners = cornerCells(size)
   const out: Record<ActorId, Coord> = {}
+  if (ids.length <= 4) {
+    const corners = cornerCells(size)
+    for (let i = 0; i < ids.length; i++) {
+      const c = corners[i]
+      if (!c) throw new Error(`spawnPositionsForActors: at most ${corners.length} corner slots`)
+      out[ids[i]!] = c
+    }
+    return out
+  }
+
+  const ring = evenlySpacedPerimeterPositions(size, ids.length)
   for (let i = 0; i < ids.length; i++) {
-    const c = corners[i]
-    if (!c) throw new Error(`spawnPositionsForActors: at most ${corners.length} corner slots`)
-    out[ids[i]!] = c
+    out[ids[i]!] = ring[i]!
   }
   return out
 }

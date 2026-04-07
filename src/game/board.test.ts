@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BOARD_MAX,
   boardSizeForLevel,
   boardSizeForMatch,
   cornerCells,
+  evenlySpacedPerimeterPositions,
   isOpponentActor,
   spawnPositionsForActors,
 } from './board'
@@ -16,8 +18,8 @@ describe('boardSizeForMatch', () => {
     expect(boardSizeForMatch(10, 3)).toBeGreaterThanOrEqual(9)
   })
 
-  it('caps at 15', () => {
-    expect(boardSizeForMatch(99, 6, 99)).toBe(15)
+  it('caps at BOARD_MAX', () => {
+    expect(boardSizeForMatch(99, 6, 99)).toBe(BOARD_MAX)
   })
 
   it('honors odd override in range', () => {
@@ -66,7 +68,7 @@ describe('spawnPositionsForActors', () => {
     expect(sp[other]).toEqual({ x: 3, y: 0 })
   })
 
-  it('places three or more fighters on corners in turn order', () => {
+  it('places three or four fighters on corners in turn order', () => {
     const size = 11
     const ids = ['a', 'b', 'c', 'd'] as const
     const sp = spawnPositionsForActors(size, [...ids], ids[0]!)
@@ -74,5 +76,19 @@ describe('spawnPositionsForActors', () => {
     for (let i = 0; i < ids.length; i++) {
       expect(sp[ids[i]!]).toEqual(corners[i])
     }
+  })
+
+  it('places five or more fighters on evenly spaced perimeter cells', () => {
+    const size = 11
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'] as const
+    const sp = spawnPositionsForActors(size, [...ids], ids[0]!)
+    const expected = evenlySpacedPerimeterPositions(size, ids.length)
+    const seen = new Set<string>()
+    for (let i = 0; i < ids.length; i++) {
+      const c = sp[ids[i]!]!
+      expect(c).toEqual(expected[i])
+      seen.add(`${c.x},${c.y}`)
+    }
+    expect(seen.size).toBe(ids.length)
   })
 })

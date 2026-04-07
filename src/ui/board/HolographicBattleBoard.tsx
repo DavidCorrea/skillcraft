@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { ActorId, Coord, TeamColorSlot } from '../../game/types'
 import { coordKey } from '../../game/board'
-import { cellCenterNormalized, pathLinesD } from './geometry'
+import { cellCenterNormalized, HOLO_GRID_GAP_FRACTION, pathLinesD } from './geometry'
 import type { BoardFxState } from './fx'
 import './holographic-board.css'
-
-/** Gap as a fraction of the inner grid width; tuned to match `.holo-board` gap + padding. */
-const GRID_GAP_FRACTION = 0.038
 
 export type BoardPiece = {
   id: ActorId
@@ -18,8 +23,15 @@ export type BoardPiece = {
   youMarker?: boolean
 }
 
+export type BattleSpeechBubble = {
+  id: string
+  actorId: ActorId
+  text: string
+  teamSlot: TeamColorSlot
+}
+
 export interface HolographicBattleBoardProps {
-  /** Grid dimension (7–15). */
+  /** Grid dimension (7–19). */
   size: number
   cells: Coord[]
   getCellClassSuffix: (c: Coord) => string
@@ -39,6 +51,10 @@ export interface HolographicBattleBoardProps {
   sceneCastElement: string | null
   /** Hover/focus tooltip when cell has actors and/or a lingering hazard. */
   getCellTooltip: (c: Coord) => string | null
+  /** Hex color (e.g. `#6eb8c8`) for move/cast range hints — matches human team token. */
+  playerHintColor?: string
+  /** Optional speech bubbles over fighters (anchored by actor position on the board). */
+  speechBubbles?: BattleSpeechBubble[] | null
 }
 
 function lungeDelta(attacker: Coord, defender: Coord): { lx: number; ly: number } {
@@ -77,7 +93,7 @@ function MoveOverlayPiece({
     return () => cancelAnimationFrame(id)
   }, [from, to])
 
-  const p = cellCenterNormalized(pos, size, GRID_GAP_FRACTION)
+  const p = cellCenterNormalized(pos, size, HOLO_GRID_GAP_FRACTION)
   const base = pieceBaseClass(teamSlot)
   return (
     <span
@@ -115,11 +131,13 @@ export function HolographicBattleBoard({
   previewPatternKeys,
   sceneCastElement,
   getCellTooltip,
+  playerHintColor,
+  speechBubbles,
 }: HolographicBattleBoardProps) {
   const pathD = useMemo(
     () =>
       pathFrom && pathTos.length > 0
-        ? pathLinesD(pathFrom, pathTos, size, GRID_GAP_FRACTION)
+        ? pathLinesD(pathFrom, pathTos, size, HOLO_GRID_GAP_FRACTION)
         : '',
     [pathFrom, pathTos, size],
   )
@@ -146,21 +164,118 @@ export function HolographicBattleBoard({
         })()
       : null
 
-  return (
-    <div className="holo-scene" data-cast-element={sceneCastElement ?? undefined}>
-      <div className="holo-frame" aria-hidden />
+  const speechBubbleLayout = useMemo(() => {
+    if (!speechBubbles?.length) return []
+    const stacks = new Map<string, number>()
+    const out: {
+      id: string
+      nx: number
+      ny: number
+      stack: number
+      text: string
+      teamSlot: TeamColorSlot
+    }[] = []
+    for (const b of speechBubbles) {
+      const pos = posById.get(b.actorId)
+      if (!pos) continue
+      const k = coordKey(pos)
+      const stack = stacks.get(k) ?? 0
+      stacks.set(k, stack + 1)
+      const p = cellCenterNormalized(pos, size, HOLO_GRID_GAP_FRACTION)
+      out.push({ id: b.id, nx: p.nx, ny: p.ny, stack, text: b.text, teamSlot: b.teamSlot })
+    }
+    return out
+  }, [speechBubbles, posById, size])
 
-      <div
-        className="holo-board"
-        style={{
-          gridTemplateColumns: `repeat(${size}, 1fr)`,
-          gridTemplateRows: `repeat(${size}, 1fr)`,
-        }}
-        onMouseLeave={() => onHoverChange(null)}
-      >
+  const sceneStyle: CSSProperties | undefined = playerHintColor
+    ? { ['--holo-player-hint' as string]: playerHintColor }
+    : undefined
+
+  const sceneRef = useRef<HTMLDivElement>(null)
+  const tiltRef = useRef<HTMLDivElement>(null)
+  const tiltTargetRef = useRef({ nx: 0, ny: 0 })
+  const tiltRafRef = useRef(0)
+  const tiltReduceMotionRef = useRef(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => {
+      tiltReduceMotionRef.current = mq.matches
+      if (mq.matches && tiltRef.current) {
+        tiltRef.current.style.removeProperty('--holo-tilt-x')
+        tiltRef.current.style.removeProperty('--holo-tilt-y')
+      }
+    }
+    sync()
+    mq.addEventListener('change', sync)
+    return () => {
+      mq.removeEventListener('change', sync)
+      if (tiltRafRef.current) cancelAnimationFrame(tiltRafRef.current)
+    }
+  }, [])
+
+  const applyCursorTilt = useCallback(() => {
+    if (tiltRafRef.current) return
+    tiltRafRef.current = requestAnimationFrame(() => {
+      tiltRafRef.current = 0
+      const el = tiltRef.current
+      if (!el || tiltReduceMotionRef.current) return
+      const { nx, ny } = tiltTargetRef.current
+      const maxX = 2.2
+      const maxY = 2.8
+      const rx = -ny * 2 * maxX
+      const ry = nx * 2 * maxY
+      el.style.setProperty('--holo-tilt-x', `${rx}deg`)
+      el.style.setProperty('--holo-tilt-y', `${ry}deg`)
+    })
+  }, [])
+
+  const onScenePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (tiltReduceMotionRef.current) return
+      const root = sceneRef.current
+      if (!root) return
+      const r = root.getBoundingClientRect()
+      if (r.width < 1 || r.height < 1) return
+      tiltTargetRef.current = {
+        nx: (e.clientX - r.left) / r.width - 0.5,
+        ny: (e.clientY - r.top) / r.height - 0.5,
+      }
+      applyCursorTilt()
+    },
+    [applyCursorTilt],
+  )
+
+  const onScenePointerLeave = useCallback(() => {
+    tiltTargetRef.current = { nx: 0, ny: 0 }
+    applyCursorTilt()
+  }, [applyCursorTilt])
+
+  return (
+    <div
+      ref={sceneRef}
+      className="holo-scene"
+      data-cast-element={sceneCastElement ?? undefined}
+      style={sceneStyle}
+      onPointerMove={onScenePointerMove}
+      onPointerLeave={onScenePointerLeave}
+    >
+      <div ref={tiltRef} className="holo-tilt">
+        <div className="holo-frame" aria-hidden />
+
+        <div
+          className="holo-board"
+          style={{
+            gridTemplateColumns: `repeat(${size}, 1fr)`,
+            gridTemplateRows: `repeat(${size}, 1fr)`,
+          }}
+          onMouseLeave={() => onHoverChange(null)}
+        >
         <svg className="holo-board__paths" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden>
           {pathD ? <path d={pathD} pathLength={1} /> : null}
         </svg>
+
+        <div className="holo-board__atmosphere" aria-hidden />
 
         {boardFx?.kind === 'move' ? (
           <div className="holo-board__overlay" aria-hidden>
@@ -268,6 +383,27 @@ export function HolographicBattleBoard({
             </button>
           )
         })}
+
+        {speechBubbleLayout.length > 0 ? (
+          <div className="holo-board__overlay holo-board__speech-overlay" aria-hidden>
+            {speechBubbleLayout.map((b) => (
+              <div
+                key={b.id}
+                className={`holo-speech-bubble holo-speech-bubble--t${b.teamSlot}`}
+                style={{
+                  position: 'absolute',
+                  left: `${b.nx * 100}%`,
+                  top: `${b.ny * 100}%`,
+                  transform: `translate(-50%, calc(-100% - ${6 + b.stack * 12}px))`,
+                  zIndex: 9,
+                }}
+              >
+                {b.text}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        </div>
       </div>
     </div>
   )

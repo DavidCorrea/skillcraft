@@ -1,6 +1,6 @@
 /*
  * Tactical grid — precision surface (GPU: opacity, filter, transform).
- * Restrained motion: one slow field drift, no particle/wave noise.
+ * Restrained motion: field drift + soft board mist (transform/opacity only; no SVG filters).
  */
 
 .holo-scene {
@@ -14,6 +14,18 @@
   aspect-ratio: 1;
   margin: auto;
   isolation: isolate;
+  perspective: min(1400px, 130vw);
+  perspective-origin: 50% 42%;
+}
+
+/* Cursor-driven tilt (GPU: transform only; vars updated via rAF, not React state). */
+.holo-tilt {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
+  transform: rotateX(var(--holo-tilt-x, 0deg)) rotateY(var(--holo-tilt-y, 0deg));
 }
 
 .holo-frame {
@@ -78,6 +90,82 @@
   vector-effect: non-scaling-stroke;
   stroke-dasharray: 0.014 0.012;
   opacity: 0.65;
+}
+
+/* Soft haze over the grid (below cast/move overlay z7, below hint cells z3+). Pointer-events none. */
+.holo-board__atmosphere {
+  position: absolute;
+  inset: 3.2%;
+  width: calc(100% - 6.4%);
+  height: calc(100% - 6.4%);
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.holo-board__atmosphere::before {
+  content: '';
+  position: absolute;
+  inset: -18%;
+  background:
+    radial-gradient(
+      ellipse 85% 60% at 28% 22%,
+      color-mix(in srgb, var(--holo-player-hint, #6eb8c8) 14%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(ellipse 75% 55% at 78% 72%, rgba(148, 163, 184, 0.07), transparent 52%),
+    linear-gradient(168deg, transparent 0%, rgba(6, 10, 14, 0.14) 48%, rgba(4, 6, 9, 0.22) 100%);
+  animation: holo-mist-drift 42s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.holo-board__atmosphere::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 45%, transparent 0%, transparent 42%, rgba(3, 5, 8, 0.18) 100%);
+  animation: holo-mist-breathe 8s ease-in-out infinite alternate;
+}
+
+@keyframes holo-mist-drift {
+  0% {
+    transform: translate3d(-1.5%, 0.5%, 0);
+  }
+  100% {
+    transform: translate3d(1.8%, -1.2%, 0);
+  }
+}
+
+@keyframes holo-mist-breathe {
+  0% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-scene {
+    perspective: none;
+  }
+
+  .holo-tilt {
+    transform: none;
+    will-change: auto;
+  }
+
+  .holo-board__atmosphere::before {
+    animation: none;
+    transform: none;
+    will-change: auto;
+  }
+
+  .holo-board__atmosphere::after {
+    animation: none;
+    opacity: 0.88;
+  }
 }
 
 .holo-cell {
@@ -178,20 +266,20 @@
 }
 
 .holo-cell--hint-move {
-  border-color: rgba(110, 184, 200, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(110, 184, 200, 0.35);
+  border-color: color-mix(in srgb, var(--holo-player-hint, #6eb8c8) 58%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--holo-player-hint, #6eb8c8) 38%, transparent);
   z-index: 2;
 }
 
 .holo-cell--hint-cast-reach {
-  border-color: rgba(120, 128, 140, 0.45);
-  background: rgba(12, 14, 18, 0.88);
+  border-color: color-mix(in srgb, var(--holo-player-hint, #6eb8c8) 40%, transparent);
+  background: color-mix(in srgb, var(--holo-player-hint, #6eb8c8) 9%, rgba(12, 14, 18, 0.88));
   z-index: 2;
 }
 
 .holo-cell--hint-cast-legal {
-  border-color: rgba(201, 162, 39, 0.75);
-  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.4);
+  border-color: color-mix(in srgb, var(--holo-player-hint, #c9a227) 82%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--holo-player-hint, #c9a227) 48%, transparent);
   z-index: 3;
 }
 
@@ -200,54 +288,171 @@
   background: rgba(180, 40, 20, 0.22);
   box-shadow: inset 0 0 14px rgba(251, 146, 60, 0.28);
   z-index: 1;
+  animation: holo-hazard-pulse-fire 6s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-ice {
   background: rgba(30, 90, 140, 0.22);
   box-shadow: inset 0 0 14px rgba(125, 211, 252, 0.28);
   z-index: 1;
+  animation: holo-hazard-pulse-ice 6.4s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-water {
   background: rgba(20, 80, 120, 0.24);
   box-shadow: inset 0 0 14px rgba(56, 189, 248, 0.26);
   z-index: 1;
+  animation: holo-hazard-pulse-water 5.8s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-electric {
   background: rgba(120, 100, 30, 0.2);
   box-shadow: inset 0 0 14px rgba(250, 230, 120, 0.35);
   z-index: 1;
+  animation: holo-hazard-pulse-electric 5.2s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-poison {
   background: rgba(40, 100, 50, 0.24);
   box-shadow: inset 0 0 14px rgba(74, 222, 128, 0.28);
   z-index: 1;
+  animation: holo-hazard-pulse-poison 6.8s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-wind {
   background: rgba(70, 85, 110, 0.2);
   box-shadow: inset 0 0 14px rgba(203, 213, 225, 0.22);
   z-index: 1;
+  animation: holo-hazard-pulse-wind 7s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-earth {
   background: rgba(110, 75, 40, 0.24);
   box-shadow: inset 0 0 14px rgba(180, 130, 70, 0.25);
   z-index: 1;
+  animation: holo-hazard-pulse-earth 6.6s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-arcane {
   background: rgba(88, 28, 135, 0.22);
   box-shadow: inset 0 0 14px rgba(167, 139, 250, 0.26);
   z-index: 1;
+  animation: holo-hazard-pulse-arcane 5.6s ease-in-out infinite alternate;
 }
 
 .holo-cell--hazard-physical {
   background: rgba(70, 75, 85, 0.26);
   box-shadow: inset 0 0 14px rgba(148, 163, 184, 0.22);
   z-index: 1;
+  animation: holo-hazard-pulse-physical 6.2s ease-in-out infinite alternate;
+}
+
+@keyframes holo-hazard-pulse-fire {
+  0%,
+  100% {
+    background: rgba(180, 40, 20, 0.19);
+    box-shadow: inset 0 0 11px rgba(251, 146, 60, 0.22);
+  }
+  50% {
+    background: rgba(180, 40, 20, 0.26);
+    box-shadow: inset 0 0 17px rgba(251, 146, 60, 0.34);
+  }
+}
+
+@keyframes holo-hazard-pulse-ice {
+  0%,
+  100% {
+    background: rgba(30, 90, 140, 0.19);
+    box-shadow: inset 0 0 11px rgba(125, 211, 252, 0.22);
+  }
+  50% {
+    background: rgba(30, 90, 140, 0.26);
+    box-shadow: inset 0 0 17px rgba(125, 211, 252, 0.34);
+  }
+}
+
+@keyframes holo-hazard-pulse-water {
+  0%,
+  100% {
+    background: rgba(20, 80, 120, 0.2);
+    box-shadow: inset 0 0 11px rgba(56, 189, 248, 0.2);
+  }
+  50% {
+    background: rgba(20, 80, 120, 0.28);
+    box-shadow: inset 0 0 17px rgba(56, 189, 248, 0.32);
+  }
+}
+
+@keyframes holo-hazard-pulse-electric {
+  0%,
+  100% {
+    background: rgba(120, 100, 30, 0.17);
+    box-shadow: inset 0 0 11px rgba(250, 230, 120, 0.28);
+  }
+  50% {
+    background: rgba(120, 100, 30, 0.24);
+    box-shadow: inset 0 0 18px rgba(250, 230, 120, 0.42);
+  }
+}
+
+@keyframes holo-hazard-pulse-poison {
+  0%,
+  100% {
+    background: rgba(40, 100, 50, 0.2);
+    box-shadow: inset 0 0 11px rgba(74, 222, 128, 0.22);
+  }
+  50% {
+    background: rgba(40, 100, 50, 0.28);
+    box-shadow: inset 0 0 17px rgba(74, 222, 128, 0.34);
+  }
+}
+
+@keyframes holo-hazard-pulse-wind {
+  0%,
+  100% {
+    background: rgba(70, 85, 110, 0.17);
+    box-shadow: inset 0 0 11px rgba(203, 213, 225, 0.18);
+  }
+  50% {
+    background: rgba(70, 85, 110, 0.24);
+    box-shadow: inset 0 0 17px rgba(203, 213, 225, 0.28);
+  }
+}
+
+@keyframes holo-hazard-pulse-earth {
+  0%,
+  100% {
+    background: rgba(110, 75, 40, 0.2);
+    box-shadow: inset 0 0 11px rgba(180, 130, 70, 0.2);
+  }
+  50% {
+    background: rgba(110, 75, 40, 0.28);
+    box-shadow: inset 0 0 17px rgba(180, 130, 70, 0.3);
+  }
+}
+
+@keyframes holo-hazard-pulse-arcane {
+  0%,
+  100% {
+    background: rgba(88, 28, 135, 0.19);
+    box-shadow: inset 0 0 11px rgba(167, 139, 250, 0.2);
+  }
+  50% {
+    background: rgba(88, 28, 135, 0.26);
+    box-shadow: inset 0 0 17px rgba(167, 139, 250, 0.32);
+  }
+}
+
+@keyframes holo-hazard-pulse-physical {
+  0%,
+  100% {
+    background: rgba(70, 75, 85, 0.22);
+    box-shadow: inset 0 0 11px rgba(148, 163, 184, 0.18);
+  }
+  50% {
+    background: rgba(70, 75, 85, 0.3);
+    box-shadow: inset 0 0 17px rgba(148, 163, 184, 0.28);
+  }
 }
 
 /** Sudden death storm — lethal band outside the safe radius. */
@@ -263,6 +468,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .holo-cell--hazard-fire,
+  .holo-cell--hazard-ice,
+  .holo-cell--hazard-water,
+  .holo-cell--hazard-electric,
+  .holo-cell--hazard-poison,
+  .holo-cell--hazard-wind,
+  .holo-cell--hazard-earth,
+  .holo-cell--hazard-arcane,
+  .holo-cell--hazard-physical {
+    animation: none;
+  }
+
   .holo-cell--overtime-lethal--pulse {
     animation: none;
     opacity: 0.85;
@@ -457,6 +674,70 @@
   height: calc(100% - 6.4%);
   pointer-events: none;
   z-index: 7;
+}
+
+.holo-board__speech-overlay {
+  z-index: 9;
+}
+
+.holo-speech-bubble {
+  max-width: min(38%, 9rem);
+  padding: 0.12rem 0.32rem 0.18rem;
+  border-radius: 5px;
+  font-size: clamp(0.48rem, 0.95vw, 0.56rem);
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: 0.015em;
+  text-align: center;
+  color: rgba(248, 252, 255, 0.92);
+  background: rgba(12, 18, 28, 0.82);
+  border: 1px solid rgba(110, 184, 200, 0.45);
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: holo-speech-life 1.5s ease-out forwards;
+  pointer-events: none;
+}
+
+.holo-speech-bubble--t0 {
+  border-color: rgba(110, 184, 200, 0.55);
+}
+.holo-speech-bubble--t1 {
+  border-color: rgba(201, 122, 114, 0.55);
+}
+.holo-speech-bubble--t2 {
+  border-color: rgba(122, 184, 148, 0.55);
+}
+.holo-speech-bubble--t3 {
+  border-color: rgba(212, 176, 96, 0.55);
+}
+.holo-speech-bubble--t4 {
+  border-color: rgba(184, 160, 232, 0.55);
+}
+.holo-speech-bubble--t5 {
+  border-color: rgba(232, 168, 104, 0.55);
+}
+.holo-speech-bubble--t6 {
+  border-color: rgba(232, 144, 184, 0.55);
+}
+.holo-speech-bubble--t7 {
+  border-color: rgba(184, 232, 96, 0.55);
+}
+
+/** Pop in, hold, then fade out; total 1.5s (matches JS removal timer). */
+@keyframes holo-speech-life {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 /* Same visual size as in-cell tokens: base `.holo-piece` is 58% of the *cell*; overlay

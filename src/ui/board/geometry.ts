@@ -1,5 +1,8 @@
 import type { Coord } from '../../game/types'
 
+/** Gap as a fraction of inner grid width; must match `.holo-board` gap + padding in CSS. */
+export const HOLO_GRID_GAP_FRACTION = 0.038
+
 /**
  * Normalized center (0–1) for a cell in a square grid with uniform gaps between cells.
  * Used for SVG overlays aligned with the same grid as the board.

@@ -1,9 +1,13 @@
 import type { StatusInstance, StatusTag } from './types'
-import { MARK_EXTRA_CAP, reactionMessages, type StatusReactionMessage, VULN_CAP } from './status-reference'
-
-const OVERLOAD_DAMAGE_CAP = 15
-const COAGULATE_DAMAGE_CAP = 12
-const MELT_WARD_FLAT = 4
+import {
+  COAGULATE_DAMAGE_CAP,
+  MARK_EXTRA_CAP,
+  MELT_WARD_FLAT,
+  OVERLOAD_DAMAGE_CAP,
+  reactionMessages,
+  type StatusReactionMessage,
+  VULN_CAP,
+} from './status-reference'
 
 function isBurning(s: StatusInstance): boolean {
   return s.tag.t === 'burning'

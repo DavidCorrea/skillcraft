@@ -6,6 +6,7 @@ import type {
   BattleLogEntry,
   Coord,
   CpuDifficulty,
+  ExpiringStatusKind,
   GameState,
   MatchMode,
   MatchSettings,
@@ -278,13 +279,103 @@ function bumpPhysicalOffenseStreak(
   return withActor(state, actorId, { ...a, physicalStreak: a.physicalStreak + 1 })
 }
 
-function decayImpacts(state: GameState): GameState {
-  const next: Record<string, TileImpact> = {}
+function decayImpactsWithExpired(state: GameState): {
+  state: GameState
+  expired: { coordKey: string; skillId: SkillId; owner: ActorId }[]
+} {
+  const expired: { coordKey: string; skillId: SkillId; owner: ActorId }[] = []
+  const nextTiles: Record<string, TileImpact> = {}
   for (const [k, v] of Object.entries(state.impactedTiles)) {
     const tr = v.turnsRemaining - 1
-    if (tr > 0) next[k] = { ...v, turnsRemaining: tr }
+    if (tr > 0) nextTiles[k] = { ...v, turnsRemaining: tr }
+    else expired.push({ coordKey: k, skillId: v.skillId, owner: v.owner })
   }
-  return { ...state, impactedTiles: next }
+  return { state: { ...state, impactedTiles: nextTiles }, expired }
+}
+
+function lingeringExpiredLogEntryFromTiles(
+  tiles: { coordKey: string; skillId: SkillId; owner: ActorId }[],
+): BattleLogEntry {
+  const text =
+    tiles.length === 1
+      ? `Residual energy fades (${getSkillDef(tiles[0]!.skillId).name}).`
+      : `${tiles.length} residual fields dissipate.`
+  return { text, detail: { kind: 'lingering_expired', tiles } }
+}
+
+/** Status instances removed entirely by turn-start decay (ids gone from `after`). */
+function expiredStatusKindsForLog(before: StatusInstance[], after: StatusInstance[]): ExpiringStatusKind[] {
+  const afterIds = new Set(after.map((s) => s.id))
+  const kinds = new Set<ExpiringStatusKind>()
+  for (const s of before) {
+    if (afterIds.has(s.id)) continue
+    const t = s.tag.t
+    if (t === 'frozen' || t === 'shield' || t === 'skillFocus' || t === 'immunized') continue
+    kinds.add(t)
+  }
+  return [...kinds].sort()
+}
+
+function statusExpiredLogEntry(game: GameState, actorId: ActorId, tags: ExpiringStatusKind[]): BattleLogEntry | null {
+  if (tags.length === 0) return null
+  const name = actorLabelForLog(game, actorId)
+  const text =
+    tags.length === 1
+      ? `${formatExpiredStatusLabel(tags[0]!)} fades from ${name}.`
+      : `${tags.map(formatExpiredStatusLabel).join(', ')} fade from ${name}.`
+  return { text, subject: actorId, detail: { kind: 'status_expired', actorId, tags } }
+}
+
+function knockbackFailedLogEntry(
+  game: GameState,
+  attackerId: ActorId,
+  targetId: ActorId,
+  reason: 'map_edge' | 'cell_blocked',
+): BattleLogEntry {
+  const atk = actorLabelForLog(game, attackerId)
+  const def = actorLabelForLog(game, targetId)
+  const text =
+    reason === 'map_edge'
+      ? `${atk} cannot push ${def} — edge of the arena.`
+      : `${atk} cannot push ${def} — tile blocked.`
+  return {
+    text,
+    subject: attackerId,
+    detail: { kind: 'knockback_failed', attackerId, targetId, reason },
+  }
+}
+
+function formatExpiredStatusLabel(t: ExpiringStatusKind): string {
+  switch (t) {
+    case 'burning':
+      return 'Burn'
+    case 'chilled':
+      return 'Chill'
+    case 'soaked':
+      return 'Soak'
+    case 'shocked':
+      return 'Shock'
+    case 'poisoned':
+      return 'Poison'
+    case 'bleeding':
+      return 'Bleed'
+    case 'slowed':
+      return 'Slow'
+    case 'marked':
+      return 'Mark'
+    case 'rooted':
+      return 'Root'
+    case 'silenced':
+      return 'Silence'
+    case 'disarmed':
+      return 'Disarm'
+    case 'regenBlocked':
+      return 'Regen block'
+    case 'muddy':
+      return 'Mud'
+    default:
+      return t
+  }
 }
 
 function layImpacts(
@@ -928,7 +1019,12 @@ function applyKnockbackFromAttacker(
   strikerId: ActorId,
   enemyId: ActorId,
   requireKnockbackTrait: boolean,
-): { state: GameState; hazardEntries: BattleLogEntry[]; knockedBack: boolean } {
+): {
+  state: GameState
+  hazardEntries: BattleLogEntry[]
+  knockedBack: boolean
+  knockbackFailReason?: 'map_edge' | 'cell_blocked'
+} {
   const striker = state.actors[strikerId]
   if (requireKnockbackTrait && striker.traits.physicalKnockback < 1) {
     return { state, hazardEntries: [], knockedBack: false }
@@ -939,8 +1035,12 @@ function applyKnockbackFromAttacker(
   const dy = Math.sign(enemy.pos.y - striker.pos.y)
   const np = { x: enemy.pos.x + dx, y: enemy.pos.y + dy }
   const sz = state.size
-  if (np.x < 0 || np.x >= sz || np.y < 0 || np.y >= sz) return { state, hazardEntries: [], knockedBack: false }
-  if (actorAt(state, np) !== null) return { state, hazardEntries: [], knockedBack: false }
+  if (np.x < 0 || np.x >= sz || np.y < 0 || np.y >= sz) {
+    return { state, hazardEntries: [], knockedBack: false, knockbackFailReason: 'map_edge' }
+  }
+  if (actorAt(state, np) !== null) {
+    return { state, hazardEntries: [], knockedBack: false, knockbackFailReason: 'cell_blocked' }
+  }
   let next = withActor(state, enemyId, { ...enemy, pos: np })
   const enter = applyImpactsOnEnter(next, enemyId, np)
   next = enter.state
@@ -1522,6 +1622,7 @@ export function applyAction(
     sumDmg += dmg
   }
 
+  const shoveKnockbackLog: BattleLogEntry[] = []
   if (offensiveSkillId === 'shove') {
     for (const { targetId } of hitList) {
       if (
@@ -1537,6 +1638,11 @@ export function applyAction(
       }
       const kb = applyKnockbackFromAttacker(next, actor, targetId, false)
       next = kb.state
+      if (!kb.knockedBack && kb.knockbackFailReason) {
+        shoveKnockbackLog.push(
+          knockbackFailedLogEntry(next, actor, targetId, kb.knockbackFailReason),
+        )
+      }
     }
   }
 
@@ -1565,6 +1671,7 @@ export function applyAction(
       subject: actor,
       detail: castDamageDetail,
     },
+    ...shoveKnockbackLog,
   ]
   if (spellRelievedIds.length > 0) {
     winCastEntries.push({
@@ -1597,6 +1704,7 @@ export function applyAction(
       subject: actor,
       detail: castDamageDetail,
     },
+    ...shoveKnockbackLog,
   ]
 
   const casterLabel = actorLabelForLog(next, actor)
@@ -1630,6 +1738,10 @@ export function applyAction(
             subject: actor,
             detail: { kind: 'knockback', attackerId: actor, targetId },
           })
+        } else if (kb.knockbackFailReason) {
+          castEntries.push(
+            knockbackFailedLogEntry(next, actor, targetId, kb.knockbackFailReason),
+          )
         }
         castEntries.push(...kb.hazardEntries)
       }
@@ -1692,7 +1804,11 @@ function nextAliveAfter(state: GameState, finished: ActorId): ActorId {
 function advanceTurn(state: GameState, finished: ActorId): GameState {
   const nextTurn = nextAliveAfter(state, finished)
   const roundComplete = isRoundComplete(state, nextTurn)
-  let next = decayImpacts({ ...state, turn: nextTurn })
+  const decayed = decayImpactsWithExpired({ ...state, turn: nextTurn })
+  let next = decayed.state
+  if (decayed.expired.length > 0) {
+    next = appendLog(next, [lingeringExpiredLogEntryFromTiles(decayed.expired)])
+  }
   const beforeRoundBoundary = next
   if (roundComplete) {
     next = processFullRoundBoundary(next)
@@ -1703,38 +1819,50 @@ function advanceTurn(state: GameState, finished: ActorId): GameState {
     if (next.winner || next.tie) {
       return appendLogWithFirstBlood(beforeRoundBoundary, next, [])
     }
+    if (!next.overtimeEnabled) {
+      next = appendLog(next, [
+        {
+          text: `End of round ${next.fullRoundsCompleted}.`,
+          detail: { kind: 'round_complete', round: next.fullRoundsCompleted },
+        },
+      ])
+    }
   }
   const beforeHooks = next
   let actor = next.actors[nextTurn]!
+  const statusesBeforeTick = actor.statuses
   const tick = computeTurnStartTick(actor)
   actor = tick.actor
   next = withActor(next, nextTurn, actor)
+  const expiredTags = expiredStatusKindsForLog(statusesBeforeTick, actor.statuses)
+  const statusExpiredEntry = statusExpiredLogEntry(next, nextTurn, expiredTags)
 
   const tickEntries = turnTickResourceEntries(next, nextTurn, tick)
+  const turnStartLog: BattleLogEntry[] = [
+    ...tickEntries,
+    ...(statusExpiredEntry ? [statusExpiredEntry] : []),
+  ]
 
-  let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
-  result = afterHpChanges(result)
-  if (result.winner || result.tie) {
-    return result
+  let afterTurnStartLog = appendLogWithFirstBlood(beforeHooks, next, turnStartLog)
+  afterTurnStartLog = afterHpChanges(afterTurnStartLog)
+  if (afterTurnStartLog.winner || afterTurnStartLog.tie) {
+    return afterTurnStartLog
   }
 
   if (hasFrozen(actor)) {
     const unfrozen = consumeFrozen(actor)
-    next = withActor(next, nextTurn, unfrozen)
-    let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
-    result = appendLog(result, [
+    const stateAfterUnfreeze = withActor(afterTurnStartLog, nextTurn, unfrozen)
+    const frozenResult = appendLog(stateAfterUnfreeze, [
       {
-        text: `${actorLabelForLog(result, nextTurn)} is frozen and skips a turn.`,
+        text: `${actorLabelForLog(stateAfterUnfreeze, nextTurn)} is frozen and skips a turn.`,
         subject: nextTurn,
         detail: { kind: 'frozen_skip', actorId: nextTurn },
       },
     ])
-    return advanceTurn(result, nextTurn)
+    return advanceTurn(frozenResult, nextTurn)
   }
 
-  next = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
-  next = appendLog(next, [turnAnnouncement(next, nextTurn)])
-  return next
+  return appendLog(afterTurnStartLog, [turnAnnouncement(afterTurnStartLog, nextTurn)])
 }
 
 export function legalMoves(state: GameState, actor: ActorId): Coord[] {
@@ -1830,22 +1958,28 @@ export function applyTurnEntry(state: GameState): GameState {
   const actorId = state.turn
   const beforeHooks = state
   let actor = state.actors[actorId]!
+  const statusesBeforeTick = actor.statuses
   const tick = computeTurnStartTick(actor)
   actor = tick.actor
   let next = withActor(state, actorId, actor)
+  const expiredTags = expiredStatusKindsForLog(statusesBeforeTick, actor.statuses)
+  const statusExpiredEntry = statusExpiredLogEntry(next, actorId, expiredTags)
   const tickEntries = turnTickResourceEntries(next, actorId, tick)
-  let result = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
+  const turnStartLog: BattleLogEntry[] = [
+    ...tickEntries,
+    ...(statusExpiredEntry ? [statusExpiredEntry] : []),
+  ]
+  let result = appendLogWithFirstBlood(beforeHooks, next, turnStartLog)
   result = afterHpChanges(result)
   if (result.winner || result.tie) {
     return result
   }
   if (hasFrozen(actor)) {
     const unfrozen = consumeFrozen(actor)
-    next = withActor(next, actorId, unfrozen)
-    let frozenSkip = appendLogWithFirstBlood(beforeHooks, next, tickEntries)
-    frozenSkip = appendLog(frozenSkip, [
+    const stateAfterUnfreeze = withActor(result, actorId, unfrozen)
+    const frozenSkip = appendLog(stateAfterUnfreeze, [
       {
-        text: `${actorLabelForLog(frozenSkip, actorId)} is frozen and skips a turn.`,
+        text: `${actorLabelForLog(stateAfterUnfreeze, actorId)} is frozen and skips a turn.`,
         subject: actorId,
         detail: { kind: 'frozen_skip', actorId },
       },

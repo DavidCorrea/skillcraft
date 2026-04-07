@@ -124,6 +124,66 @@ describe('expandBroadcastRows', () => {
     expect(rows[0]!.voice).toBe('caster')
     expect(rows[0]!.text.toLowerCase()).toMatch(/first blood|blood on the board/)
   })
+
+  it('uses second-person human banter on human turn', () => {
+    const game = minimalGame()
+    const rows = expandBroadcastRows({ text: '', detail: { kind: 'turn', actorId: 'h' } }, game, 0)
+    const humanRow = rows.find((r) => r.subject === 'h' && r.banter)
+    expect(humanRow).toBeDefined()
+    expect(
+      new Set([
+        'Your move — own the clock.',
+        'Board is yours — tempo time.',
+        'You are up — make it count.',
+      ]).has(humanRow!.text),
+    ).toBe(true)
+  })
+
+  it('expands knockback_failed into caster plus attacker and target banter', () => {
+    const game = minimalGame()
+    const entry: BattleLogEntry = {
+      text: 'x',
+      subject: 'c1',
+      detail: {
+        kind: 'knockback_failed',
+        attackerId: 'c1',
+        targetId: 'h',
+        reason: 'map_edge',
+      },
+    }
+    const rows = expandBroadcastRows(entry, game, 0)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]!.voice).toBe('caster')
+    expect(rows[1]!.subject).toBe('c1')
+    expect(rows[2]!.subject).toBe('h')
+  })
+
+  it('expands lingering_expired and round_complete', () => {
+    const game = minimalGame()
+    const ling = expandBroadcastRows(
+      {
+        text: '2 residual fields dissipate.',
+        detail: {
+          kind: 'lingering_expired',
+          tiles: [
+            { coordKey: '1,1', skillId: 'ember', owner: 'h' },
+            { coordKey: '2,2', skillId: 'ember', owner: 'h' },
+          ],
+        },
+      },
+      game,
+      0,
+    )
+    expect(ling[0]!.voice).toBe('caster')
+
+    const roundRows = expandBroadcastRows(
+      { text: 'End of round 1.', detail: { kind: 'round_complete', round: 1 } },
+      game,
+      1,
+    )
+    expect(roundRows).toHaveLength(1)
+    expect(roundRows[0]!.voice).toBe('caster')
+  })
 })
 
 describe('classic visibility', () => {

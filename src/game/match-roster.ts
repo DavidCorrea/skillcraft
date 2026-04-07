@@ -105,17 +105,20 @@ export function teamIdsHaveMultiMemberTeam(teamIds: number[]): boolean {
   return false
 }
 
+const MAX_FIGHTERS = 8
+const MAX_TEAM_INDEX = 7
+
 /**
  * Validates per-slot team assignment for custom matches (slot 0 = you).
  * Returns `null` if valid, otherwise a short user-facing message.
  */
 export function validateCustomTeamIds(teamIds: number[]): string | null {
-  if (teamIds.length < 2 || teamIds.length > 4) {
-    return 'Choose 2–4 fighters.'
+  if (teamIds.length < 2 || teamIds.length > MAX_FIGHTERS) {
+    return `Choose 2–${MAX_FIGHTERS} fighters.`
   }
   for (const t of teamIds) {
-    if (!Number.isInteger(t) || t < 0) {
-      return 'Each team must be a non-negative whole number.'
+    if (!Number.isInteger(t) || t < 0 || t > MAX_TEAM_INDEX) {
+      return 'Each team must be a whole number from 0–7 (A–H).'
     }
   }
   const distinct = new Set(teamIds)
@@ -123,6 +126,30 @@ export function validateCustomTeamIds(teamIds: number[]): string | null {
     return 'Need at least two different teams so there is an opponent.'
   }
   return null
+}
+
+/**
+ * Balanced block assignment: `teamCount` contiguous groups using ids `0 … teamCount-1`.
+ * Slot 0 (you) is always team 0. Valid when 2 ≤ fighters ≤ 8, 2 ≤ teamCount ≤ min(fighters, 8).
+ */
+export function balancedTeamIdsForSplit(fighterCount: number, teamCount: number): number[] {
+  if (
+    fighterCount < 2 ||
+    fighterCount > MAX_FIGHTERS ||
+    teamCount < 2 ||
+    teamCount > fighterCount ||
+    teamCount > MAX_TEAM_INDEX + 1
+  ) {
+    return []
+  }
+  const base = Math.floor(fighterCount / teamCount)
+  const extra = fighterCount % teamCount
+  const out: number[] = []
+  for (let team = 0; team < teamCount; team++) {
+    const n = base + (team < extra ? 1 : 0)
+    for (let j = 0; j < n; j++) out.push(team)
+  }
+  return out
 }
 
 export interface CustomCpuBuildInput {
@@ -228,7 +255,9 @@ function validateTeamColorSlotMap(
 
 function validateRosterMatch(ms: MatchSettings): MatchSettings {
   const { roster, humanActorId } = ms
-  if (roster.length < 2 || roster.length > 4) throw new Error('Roster must have 2–4 fighters')
+  if (roster.length < 2 || roster.length > MAX_FIGHTERS) {
+    throw new Error(`Roster must have 2–${MAX_FIGHTERS} fighters`)
+  }
   validateTeamColorSlotMap(ms.teamColorSlotByTeamId)
   const ids = new Set<string>()
   let humanCount = 0

@@ -373,3 +373,51 @@ describe('FFA win condition', () => {
     expect(r.winner).toBe(TID.human)
   })
 })
+
+describe('battle log — silent scenarios', () => {
+  it('appends round_complete after a full round when overtime is off', () => {
+    resetIdsForTests()
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    expect(s.overtimeEnabled).toBe(false)
+    s = applyAction(s, TID.human, { type: 'skip' }).state!
+    s = applyAction(s, TID.cpu, { type: 'skip' }).state!
+    expect(s.log.some((e) => e.detail?.kind === 'round_complete')).toBe(true)
+  })
+
+  it('appends lingering_expired when a hazard times out on turn advance', () => {
+    resetIdsForTests()
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    s = {
+      ...s,
+      impactedTiles: {
+        [coordKey({ x: 2, y: 2 })]: {
+          skillId: 'ember',
+          statusStacks: 1,
+          casterStatusPotency: 1,
+          owner: TID.human,
+          turnsRemaining: 1,
+        },
+      },
+    }
+    s = applyAction(s, TID.human, { type: 'skip' }).state!
+    expect(s.log.some((e) => e.detail?.kind === 'lingering_expired')).toBe(true)
+  })
+
+  it('appends status_expired when a duration status drops at turn start', () => {
+    resetIdsForTests()
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const hum = s.actors[TID.human]!
+    s = {
+      ...s,
+      actors: {
+        ...s.actors,
+        [TID.human]: {
+          ...hum,
+          statuses: [{ id: 'st-burn', tag: { t: 'burning', duration: 1, dot: 1 } }],
+        },
+      },
+    }
+    s = applyTurnEntry(s)
+    expect(s.log.some((e) => e.detail?.kind === 'status_expired')).toBe(true)
+  })
+})

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   chebyshevDistance,
   isOvertimeStormPulseRound,
@@ -7,6 +7,7 @@ import {
   STORM_MIN_SAFE_CELLS,
   stormCenterCandidates,
 } from './overtime'
+import * as overtime from './overtime'
 import { applyAction, createInitialState, resetIdsForTests } from './engine'
 import type { BattleConfig, MatchSettings } from './types'
 import { defaultTraitPoints } from './traits'
@@ -56,7 +57,21 @@ function stormLogCount(s: { log: { detail?: { kind?: string } }[] }): number {
 }
 
 describe('sudden death storm cadence', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('does not damage on activation; alternates damage and skip; pulse flag tracks skip round', () => {
+    /** Real storm rolls can place both duel spawns in the safe band; fix geometry so periodic storm always logs hits. */
+    vi.spyOn(overtime, 'rollStormActivation').mockReturnValue({
+      stormCenter: { x: 3, y: 3 },
+      safeRadius: 0,
+      damageStep: 0,
+      otRoundsCompleted: 0,
+      stormSkipsNextBoundary: false,
+      deferredShrink: false,
+    })
+
     resetIdsForTests()
     const base = duelBattleConfig({
       level: 8,

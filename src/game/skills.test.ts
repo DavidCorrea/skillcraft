@@ -7,6 +7,7 @@ import {
   entryPointCost,
   fitPlayerBudgetToLevel,
   focusBonusDamage,
+  formatSkillBattleHelp,
   getSkillDef,
   immunizeChargesFromStacks,
   manaCostForCast,
@@ -37,6 +38,15 @@ describe('Skill craft copy', () => {
       expect(s.flavor.trim().length, s.id).toBeGreaterThan(0)
       expect(s.effectsLine.trim().length, s.id).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('formatSkillBattleHelp', () => {
+  it('is effects line only — no flavor or pattern text', () => {
+    const t = formatSkillBattleHelp(getSkillDef('strike'))
+    expect(t).not.toContain('Steel')
+    expect(t).not.toContain('Adjacent')
+    expect(t).toContain('Bleeding')
   })
 })
 

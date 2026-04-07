@@ -90,12 +90,26 @@ const CPU_STRIKE_ATK = [
   'Through the guard.',
 ] as const
 
+const HUMAN_STRIKE_ATK = [
+  'Connected.',
+  'Clean hit.',
+  'Through them.',
+  'Tagged.',
+] as const
+
 const CPU_STRIKE_VIC = [
   'Felt that.',
   'Eating the hit.',
   'Still up.',
   'Tanking it.',
   'Noted.',
+] as const
+
+const HUMAN_STRIKE_VIC = [
+  'Took it.',
+  'Still standing.',
+  'Felt that.',
+  'Absorbing it.',
 ] as const
 
 const CASTER_LIFESTEAL = ['{name} steals {n} back off the hit.', 'Lifesteal — {name} pockets {n} HP.'] as const
@@ -302,10 +316,29 @@ function fpBanter(pool: readonly string[], seedParts: (string | number)[]): stri
   return pickPhrase(hashSeed(seedParts), pool)
 }
 
+function actorBanter(
+  game: GameState,
+  actorId: ActorId,
+  seedParts: (string | number)[],
+  humanPool: readonly string[],
+  cpuPool: readonly string[],
+): string {
+  if (actorId === game.humanActorId) {
+    return pickPhrase(hashSeed([...seedParts, 'human']), humanPool)
+  }
+  return fpBanter(cpuPool, seedParts)
+}
+
 const CPU_TURN_BANTER = [
   'My turn — ready.',
   "Clock's mine.",
   'Up.',
+] as const
+
+const HUMAN_TURN_BANTER = [
+  'Your move — own the clock.',
+  'Board is yours — tempo time.',
+  'You are up — make it count.',
 ] as const
 
 const CPU_MOVE_BANTER = [
@@ -314,10 +347,24 @@ const CPU_MOVE_BANTER = [
   'Sliding into position.',
 ] as const
 
+const HUMAN_MOVE_BANTER = [
+  'New square.',
+  'Repositioning.',
+  'Better footing.',
+  'Sliding into place.',
+] as const
+
 const CPU_SKIP_BANTER = [
   'Passing.',
   'Holding.',
   'Skipping this beat.',
+] as const
+
+const HUMAN_SKIP_BANTER = [
+  'Passing the beat.',
+  'Holding position.',
+  'Skipping this one.',
+  'No spend this turn.',
 ] as const
 
 const CPU_HEAL_BANTER = [
@@ -356,9 +403,83 @@ const CPU_WIN_BANTER = [
   'Still standing — won.',
 ] as const
 
+const CASTER_STATUS_EXPIRED = [
+  '{name} shakes off {tags} — clock ran out on those stacks.',
+  'Status dump: {tags} clear from {name}.',
+  '{name} cleans the sheet — {tags} gone.',
+] as const
+
+const CPU_STATUS_EXPIRED_BANTER = [
+  'Finally off.',
+  'Buff wore off — good.',
+  'Clean window again.',
+  'Debts paid — tags gone.',
+] as const
+
+const HUMAN_STATUS_EXPIRED_BANTER = [
+  'Off your back.',
+  'Finally clear.',
+  'That wore off.',
+  'Clean again.',
+] as const
+
+const CASTER_KNOCKBACK_FAIL_EDGE = [
+  '{atk} drives {def} but the wall says no — no tile to take.',
+  'Push denied at the rope — {def} stays put against {atk}.',
+  '{atk} tries to clear {def}; arena edge blocks the shove.',
+] as const
+
+const CASTER_KNOCKBACK_FAIL_BLOCKED = [
+  '{atk} hits the shove — someone else owns that tile; {def} holds.',
+  'Crowded square — {atk} cannot thread {def} through.',
+  'Body in the way — {def} does not budge for {atk}.',
+] as const
+
+const CPU_KNOCKBACK_FAIL_ATK = [
+  'Push stuffed.',
+  'No lane — blocked.',
+  'Couldn\'t clear them.',
+] as const
+
+const HUMAN_KNOCKBACK_FAIL_ATK = [
+  'No room to shove.',
+  'Didn\'t budge them.',
+  'Blocked push.',
+] as const
+
+const CPU_KNOCKBACK_FAIL_VIC = [
+  'Held the line.',
+  'Not moving.',
+  'Stuck firm.',
+] as const
+
+const HUMAN_KNOCKBACK_FAIL_VIC = [
+  'Not moving.',
+  'Held ground.',
+  'Stuck in place.',
+] as const
+
+const CASTER_LINGERING_EXPIRED_SINGLE = [
+  'Residual patch on the board winks out — hazard spent.',
+  'One lingering zone collapses — the tile goes quiet.',
+  'Echo magic fades from a single cell.',
+] as const
+
+const CASTER_LINGERING_EXPIRED_MULTI = [
+  'Several residual fields collapse together — cleaner floor.',
+  'Multiple hazard patches expire — breathing room.',
+  'Lingering energy dissipates in chunks across the grid.',
+] as const
+
+const CASTER_ROUND_COMPLETE = [
+  'End of round {n} — reset tempo, same hunger.',
+  'Round {n} in the books; corners tighten mentally.',
+  'That closes round {n} — coaches scribble notes.',
+] as const
+
 function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState, index: number): BroadcastRow[] {
   const rows: BroadcastRow[] = []
-  const seed = hashSeed([index, d.kind])
+  const seed = hashSeed([index, d.kind, game.turn])
 
   switch (d.kind) {
     case 'battle_start':
@@ -375,7 +496,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         })
       }
       rows.push({
-        text: fpBanter(CPU_TURN_BANTER, [seed, 'turn', d.actorId]),
+        text: actorBanter(game, d.actorId, [seed, 'turn', d.actorId], HUMAN_TURN_BANTER, CPU_TURN_BANTER),
         subject: d.actorId,
         voice: 'actor',
         banter: true,
@@ -389,7 +510,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         voice: 'caster',
       })
       rows.push({
-        text: fpBanter(CPU_MOVE_BANTER, [seed, d.actorId]),
+        text: actorBanter(game, d.actorId, [seed, d.actorId], HUMAN_MOVE_BANTER, CPU_MOVE_BANTER),
         subject: d.actorId,
         voice: 'actor',
         banter: true,
@@ -403,7 +524,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         voice: 'caster',
       })
       rows.push({
-        text: fpBanter(CPU_SKIP_BANTER, [seed, 'skip', d.actorId]),
+        text: actorBanter(game, d.actorId, [seed, 'skip', d.actorId], HUMAN_SKIP_BANTER, CPU_SKIP_BANTER),
         subject: d.actorId,
         voice: 'actor',
         banter: true,
@@ -417,21 +538,41 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         d.targetMaxHp && d.targetHpAfter !== undefined && d.targetMaxHp > 0
           ? d.targetHpAfter / d.targetMaxHp
           : 1
+      const strikeSeed = hashSeed([
+        index,
+        d.kind,
+        game.turn,
+        d.damage,
+        d.killed ? 1 : 0,
+        Math.floor(ratio * 100),
+      ])
       let strikePool: readonly string[] = CASTER_STRIKE
       if (d.killed) strikePool = CASTER_STRIKE_KILL
       else if (!d.killed && ratio <= 0.25) strikePool = CASTER_STRIKE_LOW
       rows.push({
-        text: fill(pickPhrase(seed, strikePool), { atk, def, dmg: d.damage }),
+        text: fill(pickPhrase(strikeSeed, strikePool), { atk, def, dmg: d.damage }),
         voice: 'caster',
       })
       rows.push({
-        text: fpBanter(CPU_STRIKE_ATK, [seed, 'atk', d.actorId]),
+        text: actorBanter(
+          game,
+          d.actorId,
+          [strikeSeed, 'atk', d.actorId],
+          HUMAN_STRIKE_ATK,
+          CPU_STRIKE_ATK,
+        ),
         subject: d.actorId,
         voice: 'actor',
         banter: true,
       })
       rows.push({
-        text: fpBanter(CPU_STRIKE_VIC, [seed, 'vic', d.targetId]),
+        text: actorBanter(
+          game,
+          d.targetId,
+          [strikeSeed, 'vic', d.targetId],
+          HUMAN_STRIKE_VIC,
+          CPU_STRIKE_VIC,
+        ),
         subject: d.targetId,
         voice: 'actor',
         banter: true,
@@ -817,6 +958,83 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
     case 'overtime_shrink': {
       rows.push({
         text: fill('The safe zone tightens — only {r} tiles from the eye remain.', { r: d.safeRadiusAfter }),
+        voice: 'caster',
+      })
+      break
+    }
+    case 'lingering_expired': {
+      const s = hashSeed([index, d.kind, d.tiles.length, d.tiles[0]?.skillId ?? ''])
+      rows.push({
+        text: pickPhrase(
+          s,
+          d.tiles.length === 1 ? CASTER_LINGERING_EXPIRED_SINGLE : CASTER_LINGERING_EXPIRED_MULTI,
+        ),
+        voice: 'caster',
+      })
+      break
+    }
+    case 'status_expired': {
+      const name = displayName(game, d.actorId)
+      const tagStr = d.tags.join(', ')
+      const s = hashSeed([index, d.kind, d.actorId, tagStr])
+      rows.push({
+        text: fill(pickPhrase(s, CASTER_STATUS_EXPIRED), { name, tags: tagStr }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: actorBanter(
+          game,
+          d.actorId,
+          [s, d.actorId],
+          HUMAN_STATUS_EXPIRED_BANTER,
+          CPU_STATUS_EXPIRED_BANTER,
+        ),
+        subject: d.actorId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'knockback_failed': {
+      const atk = displayName(game, d.attackerId)
+      const def = displayName(game, d.targetId)
+      const s = hashSeed([index, d.kind, d.reason, d.attackerId])
+      rows.push({
+        text:
+          d.reason === 'map_edge'
+            ? fill(pickPhrase(s, CASTER_KNOCKBACK_FAIL_EDGE), { atk, def })
+            : fill(pickPhrase(s, CASTER_KNOCKBACK_FAIL_BLOCKED), { atk, def }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: actorBanter(
+          game,
+          d.attackerId,
+          [s, 'atk', d.attackerId],
+          HUMAN_KNOCKBACK_FAIL_ATK,
+          CPU_KNOCKBACK_FAIL_ATK,
+        ),
+        subject: d.attackerId,
+        voice: 'actor',
+        banter: true,
+      })
+      rows.push({
+        text: actorBanter(
+          game,
+          d.targetId,
+          [s, 'vic', d.targetId],
+          HUMAN_KNOCKBACK_FAIL_VIC,
+          CPU_KNOCKBACK_FAIL_VIC,
+        ),
+        subject: d.targetId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'round_complete': {
+      rows.push({
+        text: fill(pickPhrase(hashSeed([index, d.round]), CASTER_ROUND_COMPLETE), { n: d.round }),
         voice: 'caster',
       })
       break

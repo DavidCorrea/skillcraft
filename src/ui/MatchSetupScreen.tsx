@@ -1,26 +1,29 @@
-import { useMemo, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { BattleConfig, CpuDifficulty, TeamColorSlot } from '../game/types'
 import {
+  balancedTeamIdsForSplit,
   buildCustomMatchSettings,
   resolveTeamColorSlotForTeamId,
   validateCustomTeamIds,
 } from '../game/match-roster'
 import { CPU_THINK_TIMEOUT_MS } from '../ai/cpuThinkBudget'
+import { BOARD_MAX } from '../game/board'
 import { randomCpuBuild } from '../game/randomCpuBuild'
-import { GameGuide } from './help/GameGuide'
 import { NumberStepper } from './numeric-stepper.tsx'
 import './board/holographic-board.css'
 import './loadout/loadout-surface.css'
 
 const TEAM_COLOR_SLOTS: TeamColorSlot[] = [0, 1, 2, 3, 4, 5, 6, 7]
 
-function defaultTeamIdsForCount(count: 2 | 3 | 4): number[] {
-  if (count === 2) return [0, 1]
-  if (count === 3) return [0, 0, 1]
-  return [0, 0, 1, 2]
-}
+const TEAM_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] as const
 
-const TEAM_LABELS = ['A', 'B', 'C', 'D'] as const
+const FIGHTER_COUNT_MIN = 2
+const FIGHTER_COUNT_MAX = 8
+
+function clampTeamCountForFighters(teamCount: number, fighterCount: number): number {
+  const maxTeams = Math.min(fighterCount, TEAM_LABELS.length)
+  return Math.max(2, Math.min(teamCount, maxTeams))
+}
 
 const CPU_DIFFICULTY_OPTIONS: { value: CpuDifficulty; label: string }[] = [
   { value: 'easy', label: 'Easy' },
@@ -37,35 +40,296 @@ function growCpuDifficulties(prev: CpuDifficulty[], newLen: number): CpuDifficul
   return out
 }
 
-/** Named layouts; same roster semantics as the former preset modes. */
-const MATCH_TEMPLATES = {
-  duel: {
-    chip: '1v1',
-    hint: 'You vs one CPU',
-    fighterCount: 2 as const,
-    teamIds: [0, 1],
-  },
-  ffa: {
-    chip: 'FFA',
-    hint: 'Four fighters, everyone solo',
-    fighterCount: 4 as const,
-    teamIds: [0, 1, 2, 3],
-  },
-  '1v3': {
-    chip: '1v3',
-    hint: 'You vs three CPUs on one team',
-    fighterCount: 4 as const,
-    teamIds: [0, 1, 1, 1],
-  },
-  '2v2': {
-    chip: '2v2',
-    hint: 'Two vs two',
-    fighterCount: 4 as const,
-    teamIds: [0, 0, 1, 1],
-  },
-} as const
+type MatchScenarioPreset = {
+  label: string
+  hint: string
+  fighterCount: number
+  teamIds: readonly number[]
+  /** When false, all CPU slots use the first tier (sidebar + roster stay in sync). */
+  cpuDifficultyPerSlot: boolean
+  /** One entry per CPU slot (fighterCount − 1); used as-is when per-slot, else flattened to one tier. */
+  cpuDifficulties: readonly CpuDifficulty[]
+  /** Empty string = auto board from level + headcount. */
+  boardOverride: string
+  overtimeEnabled: boolean
+  roundsUntilOvertime: number
+}
 
-type TemplateId = keyof typeof MATCH_TEMPLATES
+/** Fantasy-named presets: roster, CPU tiers (unified vs per-CPU), board, sudden death. */
+const MATCH_SCENARIOS = {
+  champions_circle: {
+    label: "Champion's circle",
+    hint: 'Sole duel: one rival, tight arena, hard CPU, no storm clock.',
+    fighterCount: 2,
+    teamIds: [0, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard'],
+    boardOverride: '',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  blood_moot: {
+    label: 'Blood moot (three claimants)',
+    hint: 'Three-way brawl; uneven CPU minds; mid board; storm after ten rounds.',
+    fighterCount: 3,
+    teamIds: [0, 1, 2],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'hard'],
+    boardOverride: '11',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 10,
+  },
+  shattered_square: {
+    label: 'Shattered square',
+    hint: 'Four free blades, even temper; arena breathes with your level; no overtime.',
+    fighterCount: 4,
+    teamIds: [0, 1, 2, 3],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['normal', 'normal', 'normal'],
+    boardOverride: '',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  wailing_crossroads: {
+    label: 'Wailing crossroads',
+    hint: 'Five solo banners; all CPUs cruel; wide stone; closing storm.',
+    fighterCount: 5,
+    teamIds: [0, 1, 2, 3, 4],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard', 'hard', 'hard', 'hard'],
+    boardOverride: '13',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 8,
+  },
+  phantom_conclave: {
+    label: 'Phantom conclave',
+    hint: 'Six rivals; scouts and executioners mixed; grand floor; no storm.',
+    fighterCount: 6,
+    teamIds: [0, 1, 2, 3, 4, 5],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'normal', 'hard', 'hard'],
+    boardOverride: '15',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  eclipse_tournament: {
+    label: 'Eclipse tournament',
+    hint: 'Seven solo fighters; steady foe line; vast ring; long fuse storm.',
+    fighterCount: 7,
+    teamIds: [0, 1, 2, 3, 4, 5, 6],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['normal', 'normal', 'normal', 'normal', 'normal', 'normal'],
+    boardOverride: '17',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 12,
+  },
+  cataclysm_melee: {
+    label: 'Cataclysm melee',
+    hint: 'Eight-way riot; every CPU its own weight; full span; storm hunts early.',
+    fighterCount: 8,
+    teamIds: [0, 1, 2, 3, 4, 5, 6, 7],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'normal', 'normal', 'hard', 'hard', 'nightmare'],
+    boardOverride: '19',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 6,
+  },
+  gallows_duel: {
+    label: 'Gallows duel',
+    hint: 'You vs two henchmen; soft minds; nine cells; calm air.',
+    fighterCount: 3,
+    teamIds: [0, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['easy', 'easy'],
+    boardOverride: '9',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  faithful_bonds: {
+    label: 'Faithful bonds',
+    hint: 'You and one ally vs a champion; ally steady, foe sharp.',
+    fighterCount: 3,
+    teamIds: [0, 0, 1],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['normal', 'hard'],
+    boardOverride: '9',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  tyrant_balcony: {
+    label: "Tyrant's balcony",
+    hint: 'You alone vs three court mages; all harsh; storm in fourteen rounds.',
+    fighterCount: 4,
+    teamIds: [0, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard', 'hard', 'hard'],
+    boardOverride: '11',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 14,
+  },
+  last_standing: {
+    label: 'Last standing',
+    hint: 'Four hunters ring you; nightmare chorus; storm at ten.',
+    fighterCount: 5,
+    teamIds: [0, 1, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['nightmare', 'nightmare', 'nightmare', 'nightmare'],
+    boardOverride: '13',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 10,
+  },
+  seven_gallows: {
+    label: 'Seven gallows',
+    hint: 'You vs seven nooses; tiers climb to nightmare; storm soon.',
+    fighterCount: 8,
+    teamIds: [0, 1, 1, 1, 1, 1, 1, 1],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'normal', 'hard', 'hard', 'nightmare', 'nightmare'],
+    boardOverride: '19',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 7,
+  },
+  shield_wall: {
+    label: 'Shield wall',
+    hint: 'Two shields vs two spears; fair wind; open ground.',
+    fighterCount: 4,
+    teamIds: [0, 0, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['normal', 'normal', 'normal'],
+    boardOverride: '',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  broken_spear: {
+    label: 'Broken spear cohort',
+    hint: 'Pair vs trio; all CPUs grim; eleven paces.',
+    fighterCount: 5,
+    teamIds: [0, 0, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard', 'hard', 'hard', 'hard'],
+    boardOverride: '11',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  cinder_cartel: {
+    label: 'Cinder cartel',
+    hint: 'Three vs two; mixed CPU tempers; ember floor.',
+    fighterCount: 5,
+    teamIds: [0, 0, 0, 1, 1],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'normal', 'hard'],
+    boardOverride: '11',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  war_bond: {
+    label: 'War bond',
+    hint: 'Triads clash; even odds; storm after twelve.',
+    fighterCount: 6,
+    teamIds: [0, 0, 0, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['normal', 'normal', 'normal', 'normal', 'normal'],
+    boardOverride: '13',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 12,
+  },
+  triple_seal: {
+    label: 'Triple seal',
+    hint: 'Three pairs; each CPU its own omen; wide ground.',
+    fighterCount: 6,
+    teamIds: [0, 0, 1, 1, 2, 2],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'hard', 'normal', 'hard'],
+    boardOverride: '15',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  iron_fist: {
+    label: 'Iron fist line',
+    hint: 'Four rank against two; unified steel mind; long march board.',
+    fighterCount: 6,
+    teamIds: [0, 0, 0, 0, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['normal', 'normal', 'normal', 'normal', 'normal'],
+    boardOverride: '15',
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+  },
+  crimson_pact: {
+    label: 'Crimson pact',
+    hint: 'Two oathbound vs four reavers; hard line; storm at nine.',
+    fighterCount: 6,
+    teamIds: [0, 0, 1, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard', 'hard', 'hard', 'hard', 'hard'],
+    boardOverride: '15',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 9,
+  },
+  octagon_war: {
+    label: 'Octagon war',
+    hint: 'Four on four; hard across the board; storm at eight.',
+    fighterCount: 8,
+    teamIds: [0, 0, 0, 0, 1, 1, 1, 1],
+    cpuDifficultyPerSlot: false,
+    cpuDifficulties: ['hard', 'hard', 'hard', 'hard', 'hard', 'hard', 'hard'],
+    boardOverride: '17',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 8,
+  },
+  fours_fray: {
+    label: "Four houses' fray",
+    hint: 'Four duos; every CPU a different weight; full map; early storm.',
+    fighterCount: 8,
+    teamIds: [0, 0, 1, 1, 2, 2, 3, 3],
+    cpuDifficultyPerSlot: true,
+    cpuDifficulties: ['easy', 'normal', 'hard', 'normal', 'hard', 'nightmare', 'normal'],
+    boardOverride: '19',
+    overtimeEnabled: true,
+    roundsUntilOvertime: 6,
+  },
+} as const satisfies Record<string, MatchScenarioPreset>
+
+type TemplateId = keyof typeof MATCH_SCENARIOS
+
+const TEMPLATE_GROUPS: { heading: string; ids: TemplateId[] }[] = [
+  {
+    heading: 'The wilds',
+    ids: [
+      'blood_moot',
+      'shattered_square',
+      'wailing_crossroads',
+      'phantom_conclave',
+      'eclipse_tournament',
+      'cataclysm_melee',
+    ],
+  },
+  {
+    heading: 'Oaths & trials',
+    ids: [
+      'champions_circle',
+      'gallows_duel',
+      'faithful_bonds',
+      'tyrant_balcony',
+      'last_standing',
+      'seven_gallows',
+    ],
+  },
+  {
+    heading: 'War bands',
+    ids: [
+      'shield_wall',
+      'broken_spear',
+      'cinder_cartel',
+      'war_bond',
+      'triple_seal',
+      'iron_fist',
+      'crimson_pact',
+      'octagon_war',
+      'fours_fray',
+    ],
+  },
+]
 
 export type MatchDraft = {
   level: number
@@ -73,384 +337,443 @@ export type MatchDraft = {
   playerTraits: BattleConfig['playerTraits']
 }
 
-export function MatchSetupScreen({
-  draft,
-  onConfirm,
-  onBack,
-}: {
+export type MatchSetupFormHandle = {
+  tryConfirm: () => BattleConfig | null
+}
+
+export type MatchSetupFormProps = {
   draft: MatchDraft
-  onConfirm: (config: BattleConfig) => void
-  onBack: () => void
-}) {
-  const [cpuDifficulties, setCpuDifficulties] = useState<CpuDifficulty[]>(['normal'])
-  /** When false, one control sets every CPU to the same tier. */
-  const [cpuDifficultyPerSlot, setCpuDifficultyPerSlot] = useState(false)
-  const [boardOverride, setBoardOverride] = useState<string>('')
-  const [fighterCount, setFighterCount] = useState<2 | 3 | 4>(2)
-  const [teamIds, setTeamIds] = useState<number[]>(() => [...MATCH_TEMPLATES.duel.teamIds])
-  /** Per-team palette slot overrides; empty means default `clamp(teamId, 0, 7)`. */
-  const [teamColorSlotByTeamId, setTeamColorSlotByTeamId] = useState<
-    Partial<Record<number, TeamColorSlot>>
-  >({})
-  /** Which template matches current fields; empty after manual edits. */
-  const [activeTemplate, setActiveTemplate] = useState<TemplateId | ''>('duel')
-  const [overtimeEnabled, setOvertimeEnabled] = useState(false)
-  const [roundsUntilOvertime, setRoundsUntilOvertime] = useState(12)
+  /** Fired when team validation changes (avoids stale ref reads for footer UI). */
+  onValidityChange?: (v: { canStart: boolean; teamError: string | null }) => void
+}
 
-  const boardSizeParsed = useMemo(() => {
-    const t = boardOverride.trim()
-    if (!t) return undefined
-    const n = Number(t)
-    if (!Number.isFinite(n)) return undefined
-    return Math.min(15, Math.max(7, Math.round(n)))
-  }, [boardOverride])
+export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormProps>(
+  function MatchSetupForm({ draft, onValidityChange }, ref) {
+    const [cpuDifficulties, setCpuDifficulties] = useState<CpuDifficulty[]>(['normal'])
+    /** When false, one control sets every CPU to the same tier. */
+    const [cpuDifficultyPerSlot, setCpuDifficultyPerSlot] = useState(false)
+    const [boardOverride, setBoardOverride] = useState<string>('')
+    const [fighterCount, setFighterCount] = useState<number>(2)
+    /** How many team letters (A…) are available in the roster; drives Teams dropdown and caps team picks. */
+    const [teamPartitionCount, setTeamPartitionCount] = useState(2)
+    const [teamIds, setTeamIds] = useState<number[]>(() => [...MATCH_SCENARIOS.champions_circle.teamIds])
+    /** Per-team palette slot overrides; empty means default `clamp(teamId, 0, 7)`. */
+    const [teamColorSlotByTeamId, setTeamColorSlotByTeamId] = useState<
+      Partial<Record<number, TeamColorSlot>>
+    >({})
+    /** Which template matches current fields; empty after manual edits. */
+    const [activeTemplate, setActiveTemplate] = useState<TemplateId | ''>('champions_circle')
+    const [overtimeEnabled, setOvertimeEnabled] = useState(false)
+    const [roundsUntilOvertime, setRoundsUntilOvertime] = useState(12)
 
-  const customTeamError = useMemo(() => validateCustomTeamIds(teamIds), [teamIds])
+    const onValidityChangeRef = useRef(onValidityChange)
+    onValidityChangeRef.current = onValidityChange
 
-  const distinctTeamIds = useMemo(() => Array.from(new Set(teamIds)).sort((a, b) => a - b), [teamIds])
+    const boardSizeParsed = useMemo(() => {
+      const t = boardOverride.trim()
+      if (!t) return undefined
+      const n = Number(t)
+      if (!Number.isFinite(n)) return undefined
+      return Math.min(BOARD_MAX, Math.max(7, Math.round(n)))
+    }, [boardOverride])
 
-  /** Resolved palette slot per team (defaults + overrides), for exclusive picking. */
-  const resolvedColorByTeamId = useMemo(() => {
-    const rec: Partial<Record<number, TeamColorSlot>> = {}
-    for (const t of distinctTeamIds) {
-      rec[t] = resolveTeamColorSlotForTeamId(t, teamColorSlotByTeamId)
+    const customTeamError = useMemo(() => validateCustomTeamIds(teamIds), [teamIds])
+
+    useEffect(() => {
+      onValidityChangeRef.current?.({
+        canStart: customTeamError === null,
+        teamError: customTeamError,
+      })
+    }, [customTeamError])
+
+    const distinctTeamIds = useMemo(() => Array.from(new Set(teamIds)).sort((a, b) => a - b), [teamIds])
+
+    /** Resolved palette slot per team (defaults + overrides), for exclusive picking. */
+    const resolvedColorByTeamId = useMemo(() => {
+      const rec: Partial<Record<number, TeamColorSlot>> = {}
+      for (const t of distinctTeamIds) {
+        rec[t] = resolveTeamColorSlotForTeamId(t, teamColorSlotByTeamId)
+      }
+      return rec
+    }, [distinctTeamIds, teamColorSlotByTeamId])
+
+    const nCpu = fighterCount - 1
+
+    const maxTeamOptions = Math.min(fighterCount, TEAM_LABELS.length)
+    const rosterTeamIndexMax = teamPartitionCount - 1
+
+    const useUnifiedCpuDifficultyUi = nCpu <= 1 || !cpuDifficultyPerSlot
+
+    const hasNightmareSelected = useMemo(() => {
+      if (!useUnifiedCpuDifficultyUi) return cpuDifficulties.some((d) => d === 'nightmare')
+      return (cpuDifficulties[0] ?? 'normal') === 'nightmare'
+    }, [useUnifiedCpuDifficultyUi, cpuDifficulties])
+
+    function applyTemplate(id: TemplateId) {
+      const s = MATCH_SCENARIOS[id]
+      const nCpu = s.fighterCount - 1
+      let diffs = [...s.cpuDifficulties]
+      if (diffs.length < nCpu) {
+        diffs = growCpuDifficulties(diffs.length > 0 ? diffs : ['normal'], nCpu)
+      } else if (diffs.length > nCpu) {
+        diffs = diffs.slice(0, nCpu)
+      }
+      if (!s.cpuDifficultyPerSlot && nCpu > 0) {
+        const v = diffs[0] ?? 'normal'
+        diffs = Array.from({ length: nCpu }, () => v)
+      }
+      setFighterCount(s.fighterCount)
+      setTeamIds([...s.teamIds])
+      setTeamPartitionCount(new Set(s.teamIds).size)
+      setCpuDifficultyPerSlot(nCpu > 1 && s.cpuDifficultyPerSlot)
+      setCpuDifficulties(diffs)
+      setBoardOverride(s.boardOverride)
+      setOvertimeEnabled(s.overtimeEnabled)
+      setRoundsUntilOvertime(s.roundsUntilOvertime)
+      setTeamColorSlotByTeamId({})
+      setActiveTemplate(id)
     }
-    return rec
-  }, [distinctTeamIds, teamColorSlotByTeamId])
 
-  const nCpu = fighterCount - 1
-
-  const useUnifiedCpuDifficultyUi = nCpu <= 1 || !cpuDifficultyPerSlot
-
-  const hasNightmareSelected = useMemo(() => {
-    if (!useUnifiedCpuDifficultyUi) return cpuDifficulties.some((d) => d === 'nightmare')
-    return (cpuDifficulties[0] ?? 'normal') === 'nightmare'
-  }, [useUnifiedCpuDifficultyUi, cpuDifficulties])
-
-  function applyTemplate(id: TemplateId) {
-    const t = MATCH_TEMPLATES[id]
-    setFighterCount(t.fighterCount)
-    setTeamIds([...t.teamIds])
-    setCpuDifficulties((prev) => growCpuDifficulties(prev, t.fighterCount - 1))
-    setTeamColorSlotByTeamId({})
-    setActiveTemplate(id)
-  }
-
-  function markCustomized() {
-    setActiveTemplate('')
-  }
-
-  function buildConfig(): BattleConfig {
-    const level = draft.level
-    const err = validateCustomTeamIds(teamIds)
-    if (err) throw new Error(err)
-    const cpuBuilds = []
-    const nCpu = teamIds.length - 1
-    const diffs =
-      cpuDifficulties.length === nCpu
-        ? cpuDifficulties
-        : growCpuDifficulties(cpuDifficulties, nCpu)
-    for (let i = 0; i < nCpu; i++) {
-      const b = randomCpuBuild(level, diffs[i] ?? 'normal')
-      cpuBuilds.push({ loadout: b.cpuLoadout, traits: b.cpuTraits })
+    function markCustomized() {
+      setActiveTemplate('')
     }
-    const colorKeys = Object.keys(teamColorSlotByTeamId)
-    const match = buildCustomMatchSettings({
-      humanLoadout: draft.playerLoadout,
-      humanTraits: draft.playerTraits,
-      cpuBuilds,
-      teamIds,
-      boardSize: boardSizeParsed,
-      defaultCpuDifficulty: diffs[0] ?? 'normal',
-      cpuDifficulties: diffs,
-      teamColorSlotByTeamId: colorKeys.length > 0 ? teamColorSlotByTeamId : undefined,
-      overtimeEnabled,
-      ...(overtimeEnabled
-        ? {
-            roundsUntilOvertime: Math.max(1, Math.min(99, Math.round(roundsUntilOvertime))),
-          }
-        : {}),
-    })
-    const first = cpuBuilds[0]!
-    return {
-      level,
-      playerLoadout: draft.playerLoadout,
-      playerTraits: draft.playerTraits,
-      cpuLoadout: first.loadout,
-      cpuTraits: first.traits,
-      match,
-    }
-  }
 
-  return (
-    <div className="loadout-surface match-setup">
-      <header className="ls-match-head">
-        <div>
-          <h1 className="ls-title">Match setup</h1>
-          <p className="ls-sub">Template or custom teams, then start. CPUs get random loadouts at battle start.</p>
-        </div>
-        <div className="ls-match-head__aside">
-          <span className="ls-match-meta">LV {draft.level}</span>
-          <GameGuide
-            contextContent={
-              <>
-                <p className="ls-modal__note">
-                  Assign each fighter slot to a team letter. Same letter means allies; you need at least two different
-                  teams. CPUs get random loadouts when the battle starts.
-                </p>
-                <p className="ls-modal__note">
-                  Templates apply a preset layout; you can change fighter count or teams afterward. Skills, Strikes, and
-                  tile hazards can hit anyone in range or on affected cells — allies and yourself included — so aim and
-                  positioning matter.
-                </p>
-                <p className="ls-modal__note">
-                  <strong>CPU difficulty</strong> applies per computer fighter: how they roll random loadouts and traits,
-                  and how strong their lookahead is when it is their turn. Non-Easy levels use deeper search in{' '}
-                  <strong>1v1</strong> than with <strong>three or more fighters</strong> (branching is higher in big
-                  matches). Nightmare &gt; Hard &gt; Normal; Easy sometimes picks among legal moves at random.
-                </p>
-                <p className="ls-modal__note">
-                  <strong>More options</strong> (collapsed by default) includes board size, sudden death, and optional
-                  team colors for tokens and the HUD.
-                </p>
-                <p className="ls-modal__note">
-                  <strong>Sudden death</strong> (optional): after N full rounds (everyone acts once per round), a storm
-                  appears. The kill zone is shown right away; the <strong>first</strong> full-round boundary after that is
-                  warning-only (no storm damage). Afterward, storm damage and &quot;skip&quot; rounds{' '}
-                  <strong>alternate</strong>. <strong>Pulsing</strong> red storm tiles mean the next boundary will{' '}
-                  <em>not</em> storm-tick; <strong>solid</strong> red means it will. The safe zone shrinks over time.
-                  Storm damage ignores armor and only burns shield, then HP.
-                </p>
-              </>
+    const buildConfig = useCallback((): BattleConfig | null => {
+      const level = draft.level
+      const err = validateCustomTeamIds(teamIds)
+      if (err) return null
+      const cpuBuilds = []
+      const nCpuLocal = teamIds.length - 1
+      const diffs =
+        cpuDifficulties.length === nCpuLocal
+          ? cpuDifficulties
+          : growCpuDifficulties(cpuDifficulties, nCpuLocal)
+      for (let i = 0; i < nCpuLocal; i++) {
+        const b = randomCpuBuild(level, diffs[i] ?? 'normal')
+        cpuBuilds.push({ loadout: b.cpuLoadout, traits: b.cpuTraits })
+      }
+      const colorKeys = Object.keys(teamColorSlotByTeamId)
+      const match = buildCustomMatchSettings({
+        humanLoadout: draft.playerLoadout,
+        humanTraits: draft.playerTraits,
+        cpuBuilds,
+        teamIds,
+        boardSize: boardSizeParsed,
+        defaultCpuDifficulty: diffs[0] ?? 'normal',
+        cpuDifficulties: diffs,
+        teamColorSlotByTeamId: colorKeys.length > 0 ? teamColorSlotByTeamId : undefined,
+        overtimeEnabled,
+        ...(overtimeEnabled
+          ? {
+              roundsUntilOvertime: Math.max(1, Math.min(99, Math.round(roundsUntilOvertime))),
             }
-          />
-        </div>
-      </header>
+          : {}),
+      })
+      const first = cpuBuilds[0]!
+      return {
+        level,
+        playerLoadout: draft.playerLoadout,
+        playerTraits: draft.playerTraits,
+        cpuLoadout: first.loadout,
+        cpuTraits: first.traits,
+        match,
+      }
+    }, [
+      draft.level,
+      draft.playerLoadout,
+      draft.playerTraits,
+      teamIds,
+      cpuDifficulties,
+      teamColorSlotByTeamId,
+      boardSizeParsed,
+      overtimeEnabled,
+      roundsUntilOvertime,
+    ])
 
-      <div className="ls-main">
-        <div className="ls-field ls-field--templates">
-          <span>Templates</span>
-          <div className="ls-template-chips" role="group" aria-label="Match templates">
-            {(Object.keys(MATCH_TEMPLATES) as TemplateId[]).map((id) => {
-              const t = MATCH_TEMPLATES[id]
+    useImperativeHandle(
+      ref,
+      () => ({
+        tryConfirm: () => buildConfig(),
+      }),
+      [buildConfig],
+    )
+
+    return (
+      <div className="ls-match-layout">
+        <aside className="ls-match-side" aria-label="Match presets and CPU defaults">
+          <label className="ls-field ls-field--templates">
+            <span>Scenario</span>
+            <select
+              className="ls-select"
+              value={activeTemplate}
+              onChange={(e) => {
+                const id = e.target.value as TemplateId | ''
+                if (id === '') {
+                  setActiveTemplate('')
+                  return
+                }
+                applyTemplate(id)
+              }}
+              aria-label="Match scenario template"
+            >
+              <option value="">Custom (current)</option>
+              {TEMPLATE_GROUPS.map((g) => (
+                <optgroup key={g.heading} label={g.heading}>
+                  {g.ids.map((id) => {
+                    const s = MATCH_SCENARIOS[id]
+                    return (
+                      <option key={id} value={id} title={s.hint}>
+                        {s.label}
+                      </option>
+                    )
+                  })}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+
+          <label className="ls-field">
+            <span>Fighters</span>
+            <select
+              className="ls-select"
+              value={String(fighterCount)}
+              onChange={(e) => {
+                const c = Number(e.target.value)
+                const nextTeamCount = clampTeamCountForFighters(teamPartitionCount, c)
+                setFighterCount(c)
+                setTeamPartitionCount(nextTeamCount)
+                setTeamIds(balancedTeamIdsForSplit(c, nextTeamCount))
+                setCpuDifficulties((prev) => growCpuDifficulties(prev, c - 1))
+                setTeamColorSlotByTeamId({})
+                markCustomized()
+              }}
+              aria-label="Number of fighters"
+            >
+              {Array.from({ length: FIGHTER_COUNT_MAX - FIGHTER_COUNT_MIN + 1 }, (_, i) => {
+                const n = FIGHTER_COUNT_MIN + i
+                return (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+
+          <label className="ls-field">
+            <span>Teams</span>
+            <select
+              className="ls-select"
+              value={String(teamPartitionCount)}
+              onChange={(e) => {
+                const t = Number(e.target.value)
+                setTeamPartitionCount(t)
+                setTeamIds(balancedTeamIdsForSplit(fighterCount, t))
+                setTeamColorSlotByTeamId({})
+                markCustomized()
+              }}
+              aria-label="Number of teams"
+            >
+              {Array.from({ length: maxTeamOptions - 2 + 1 }, (_, i) => {
+                const n = 2 + i
+                return (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+
+          <div className="ls-field" aria-label="CPU difficulty">
+            <span>CPU difficulty</span>
+            {useUnifiedCpuDifficultyUi ? (
+              <select
+                className="ls-select"
+                value={cpuDifficulties[0] ?? 'normal'}
+                onChange={(e) => {
+                  const v = e.target.value as CpuDifficulty
+                  setCpuDifficulties(Array.from({ length: Math.max(0, nCpu) }, () => v))
+                }}
+                aria-label="CPU difficulty for all computer fighters"
+              >
+                {CPU_DIFFICULTY_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="ls-custom-hint">Set each CPU tier in the roster.</p>
+            )}
+            {nCpu > 1 ? (
+              <button
+                type="button"
+                className="ls-btn-ghost"
+                onClick={() => {
+                  if (cpuDifficultyPerSlot) {
+                    setCpuDifficulties((prev) =>
+                      Array.from({ length: nCpu }, () => prev[0] ?? 'normal'),
+                    )
+                    setCpuDifficultyPerSlot(false)
+                  } else {
+                    setCpuDifficultyPerSlot(true)
+                  }
+                }}
+              >
+                {cpuDifficultyPerSlot ? 'One difficulty for all CPUs' : 'Set per CPU…'}
+              </button>
+            ) : null}
+          </div>
+
+          {hasNightmareSelected ? (
+            <p className="ls-modal__note" role="status">
+              Nightmare is CPU-heavy; turns can run up to {CPU_THINK_TIMEOUT_MS / 1000}s each, then fall back to a quick
+              move.
+            </p>
+          ) : null}
+        </aside>
+
+        <section
+          className="ls-match-roster"
+          aria-label="Roster and team colors"
+          title="Same team letter = allies. At least two different teams required."
+        >
+          <div className="ls-field ls-match-roster-field">
+            <span>Roster</span>
+            <p className="ls-custom-hint ls-match-roster-hint">
+              Same team letter = allies. At least two different teams required.
+            </p>
+            <div className="ls-match-roster-grid">
+              {teamIds.map((tid, slot) => (
+                <div key={slot} className="ls-match-slot-row">
+                  <span className="ls-match-slot-label">{slot === 0 ? 'You' : `CPU ${slot}`}</span>
+                  <select
+                    className="ls-select ls-match-slot-team"
+                    value={String(Math.min(rosterTeamIndexMax, Math.max(0, tid)))}
+                    onChange={(e) => {
+                      const next = Number(e.target.value)
+                      markCustomized()
+                      const copy = [...teamIds]
+                      copy[slot] = next
+                      setTeamIds(copy)
+                    }}
+                    aria-label={slot === 0 ? 'Your team' : `CPU ${slot} team`}
+                  >
+                    {Array.from({ length: teamPartitionCount }, (_, teamIndex) => {
+                      const label = TEAM_LABELS[teamIndex] ?? String(teamIndex)
+                      return (
+                        <option key={teamIndex} value={String(teamIndex)}>
+                          Team {label}
+                        </option>
+                      )
+                    })}
+                  </select>
+                  {slot === 0 ? (
+                    <select
+                      className="ls-select ls-match-slot-diff"
+                      disabled
+                      value="—"
+                      aria-label="CPU difficulty does not apply to you"
+                      title="Human fighter — no CPU tier"
+                    >
+                      <option value="—">—</option>
+                    </select>
+                  ) : (
+                    <select
+                      className="ls-select ls-match-slot-diff"
+                      disabled={useUnifiedCpuDifficultyUi}
+                      value={cpuDifficulties[slot - 1] ?? 'normal'}
+                      onChange={(e) => {
+                        const v = e.target.value as CpuDifficulty
+                        setCpuDifficulties((prev) => {
+                          const next = [...prev]
+                          next[slot - 1] = v
+                          return next
+                        })
+                      }}
+                      aria-label={`CPU ${slot} difficulty`}
+                      title={
+                        useUnifiedCpuDifficultyUi
+                          ? 'Same difficulty for all CPUs — change it under CPU difficulty in the left column'
+                          : undefined
+                      }
+                    >
+                      {CPU_DIFFICULTY_OPTIONS.map(({ value, label }) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+            {customTeamError ? (
+              <p className="ls-custom-err" role="alert">
+                {customTeamError}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="ls-field ls-field--team-colors" aria-label="Team colors">
+            <span>Team colors</span>
+            <p className="ls-custom-hint">
+              Tokens and HUD palette; defaults follow team index. Each color once across teams.
+            </p>
+            {distinctTeamIds.map((tid) => {
+              const label = TEAM_LABELS[tid] ?? String(tid)
               return (
-                <button
-                  key={id}
-                  type="button"
-                  title={t.hint}
-                  className={`ls-template-chip${activeTemplate === id ? ' is-active' : ''}`}
-                  onClick={() => applyTemplate(id)}
-                >
-                  {t.chip}
-                </button>
+                <div key={tid} className="ls-team-color-row">
+                  <span className="ls-team-color-label">Team {label}</span>
+                  <div
+                    className="ls-team-color-swatches"
+                    role="radiogroup"
+                    aria-label={`Color for team ${label}`}
+                  >
+                    {TEAM_COLOR_SLOTS.map((colorSlot) => {
+                      const selected = resolvedColorByTeamId[tid] === colorSlot
+                      const takenByOther = distinctTeamIds.some(
+                        (oth) => oth !== tid && resolvedColorByTeamId[oth] === colorSlot,
+                      )
+                      const disabled = takenByOther && !selected
+                      return (
+                        <button
+                          key={colorSlot}
+                          type="button"
+                          className={`ls-team-swatch${selected ? ' is-selected' : ''}`}
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={disabled}
+                          title={
+                            disabled
+                              ? `Color taken by another team (slot ${colorSlot})`
+                              : `Color slot ${colorSlot}`
+                          }
+                          onClick={() => {
+                            setTeamColorSlotByTeamId((prev) => ({ ...prev, [tid]: colorSlot }))
+                            markCustomized()
+                          }}
+                        >
+                          <span
+                            className={`holo-piece holo-piece--t${colorSlot} ls-team-swatch__disc`}
+                            aria-hidden
+                          />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               )
             })}
           </div>
-        </div>
+        </section>
 
-        <label className="ls-field">
-          <span>
-            Fighters
-            {activeTemplate ? (
-              <>
-                {' '}
-                <span className="ls-match-template-badge" title={MATCH_TEMPLATES[activeTemplate].hint}>
-                  {MATCH_TEMPLATES[activeTemplate].chip}
-                </span>
-              </>
-            ) : null}
-          </span>
-          <select
-            className="ls-select"
-            value={String(fighterCount)}
-            onChange={(e) => {
-              const c = Number(e.target.value) as 2 | 3 | 4
-              setFighterCount(c)
-              setTeamIds(defaultTeamIdsForCount(c))
-              setCpuDifficulties((prev) => growCpuDifficulties(prev, c - 1))
-              setTeamColorSlotByTeamId({})
-              markCustomized()
-            }}
-            aria-label="Number of fighters"
-          >
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-          </select>
-        </label>
-
-        <div
-          className="ls-field ls-custom-teams"
-          aria-label="Team per fighter"
-          title="Same team letter = allies. At least two different teams required."
-        >
-          <span>Team per fighter</span>
-          <div className="ls-custom-slots">
-            {teamIds.map((tid, slot) => (
-              <label key={slot} className="ls-field ls-field--row">
-                <span className="ls-custom-slot-label">
-                  {slot === 0 ? 'You' : `CPU ${slot}`}
-                </span>
-                <select
-                  className="ls-select"
-                  value={String(Math.min(3, Math.max(0, tid)))}
-                  onChange={(e) => {
-                    const next = Number(e.target.value)
-                    markCustomized()
-                    setTeamIds((prev) => {
-                      const copy = [...prev]
-                      copy[slot] = next
-                      return copy
-                    })
-                  }}
-                  aria-label={slot === 0 ? 'Your team' : `CPU ${slot} team`}
-                >
-                  {TEAM_LABELS.map((label, teamIndex) => (
-                    <option key={teamIndex} value={String(teamIndex)}>
-                      Team {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
-          {customTeamError ? (
-            <p className="ls-custom-err" role="alert">
-              {customTeamError}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="ls-field" aria-label="CPU difficulty">
-          <span>CPU difficulty</span>
-          {useUnifiedCpuDifficultyUi ? (
-            <select
-              className="ls-select"
-              value={cpuDifficulties[0] ?? 'normal'}
-              onChange={(e) => {
-                const v = e.target.value as CpuDifficulty
-                setCpuDifficulties(Array.from({ length: Math.max(0, nCpu) }, () => v))
-              }}
-              aria-label="CPU difficulty for all computer fighters"
-            >
-              {CPU_DIFFICULTY_OPTIONS.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="ls-custom-slots">
-              {cpuDifficulties.map((d, i) => (
-                <label key={i} className="ls-field ls-field--row">
-                  <span className="ls-custom-slot-label">CPU {i + 1}</span>
-                  <select
-                    className="ls-select"
-                    value={d}
-                    onChange={(e) => {
-                      const v = e.target.value as CpuDifficulty
-                      setCpuDifficulties((prev) => {
-                        const next = [...prev]
-                        next[i] = v
-                        return next
-                      })
-                    }}
-                    aria-label={`CPU ${i + 1} difficulty`}
-                  >
-                    {CPU_DIFFICULTY_OPTIONS.map(({ value, label }) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-          )}
-          {nCpu > 1 ? (
-            <button
-              type="button"
-              className="ls-btn-ghost"
-              onClick={() => {
-                if (cpuDifficultyPerSlot) {
-                  setCpuDifficulties((prev) =>
-                    Array.from({ length: nCpu }, () => prev[0] ?? 'normal'),
-                  )
-                  setCpuDifficultyPerSlot(false)
-                } else {
-                  setCpuDifficultyPerSlot(true)
-                }
-              }}
-            >
-              {cpuDifficultyPerSlot ? 'One difficulty for all CPUs' : 'Set per CPU…'}
-            </button>
-          ) : null}
-        </div>
-
-        {hasNightmareSelected ? (
-          <p className="ls-modal__note" role="status">
-            Nightmare is CPU-heavy; turns can run up to {CPU_THINK_TIMEOUT_MS / 1000}s each, then fall back to a quick
-            move.
-          </p>
-        ) : null}
-
-        <details className="ls-match-advanced">
-          <summary className="ls-match-advanced__summary">More options</summary>
-          <div className="ls-match-advanced__body">
-            <div className="ls-field ls-field--team-colors" aria-label="Team colors">
-              <span>Team colors</span>
-              <p className="ls-custom-hint">
-                Tokens and HUD palette; defaults follow team index. Each color once across teams.
-              </p>
-              {distinctTeamIds.map((tid) => {
-                const label = TEAM_LABELS[tid] ?? String(tid)
-                return (
-                  <div key={tid} className="ls-team-color-row">
-                    <span className="ls-team-color-label">Team {label}</span>
-                    <div
-                      className="ls-team-color-swatches"
-                      role="radiogroup"
-                      aria-label={`Color for team ${label}`}
-                    >
-                      {TEAM_COLOR_SLOTS.map((slot) => {
-                        const selected = resolvedColorByTeamId[tid] === slot
-                        const takenByOther = distinctTeamIds.some(
-                          (oth) => oth !== tid && resolvedColorByTeamId[oth] === slot,
-                        )
-                        const disabled = takenByOther && !selected
-                        return (
-                          <button
-                            key={slot}
-                            type="button"
-                            className={`ls-team-swatch${selected ? ' is-selected' : ''}`}
-                            role="radio"
-                            aria-checked={selected}
-                            disabled={disabled}
-                            title={
-                              disabled
-                                ? `Color taken by another team (slot ${slot})`
-                                : `Color slot ${slot}`
-                            }
-                            onClick={() => {
-                              setTeamColorSlotByTeamId((prev) => ({ ...prev, [tid]: slot }))
-                              markCustomized()
-                            }}
-                          >
-                            <span
-                              className={`holo-piece holo-piece--t${slot} ls-team-swatch__disc`}
-                              aria-hidden
-                            />
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-
+        <aside className="ls-match-rail" aria-label="More match options">
+          <p className="ls-rail__title">More options</p>
+          <div className="ls-match-rail__fields">
             <label className="ls-field">
-              <span>Board size (odd 7–15, empty = auto)</span>
+              <span>Board size (odd 7–19, empty = auto)</span>
               <input
                 className="ls-input"
                 type="text"
@@ -490,27 +813,8 @@ export function MatchSetupScreen({
               ) : null}
             </div>
           </div>
-        </details>
+        </aside>
       </div>
-
-      <footer className="ls-foot ls-foot--end">
-        <div className="ls-foot__actions">
-          <button type="button" className="ls-btn-ghost" onClick={onBack}>
-            Back
-          </button>
-          <button
-            type="button"
-            className="ls-btn-primary"
-            disabled={customTeamError !== null}
-            onClick={() => {
-              if (validateCustomTeamIds(teamIds)) return
-              onConfirm(buildConfig())
-            }}
-          >
-            Start battle
-          </button>
-        </div>
-      </footer>
-    </div>
-  )
-}
+    )
+  },
+)

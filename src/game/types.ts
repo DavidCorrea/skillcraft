@@ -179,6 +179,12 @@ export type StatusReactionKey =
   | 'tar'
   | 'stagger'
 
+/** Status families that can expire from duration decay at turn start (see engine `decayStatuses`). */
+export type ExpiringStatusKind = Exclude<
+  StatusTag['t'],
+  'frozen' | 'shield' | 'skillFocus' | 'immunized'
+>
+
 /** Structured payload for broadcast log; Classic uses `text` only. */
 export type BattleLogDetail =
   | { kind: 'battle_start' }
@@ -291,6 +297,22 @@ export type BattleLogDetail =
     }
   | { kind: 'overtime_shrink'; safeRadiusAfter: number }
   | { kind: 'tie' }
+  /** Lingering tiles removed after the global decay step in advanceTurn. */
+  | {
+      kind: 'lingering_expired'
+      tiles: { coordKey: string; skillId: SkillId; owner: ActorId }[]
+    }
+  /** Duration-based statuses that fully dropped off at this actor's turn start (after computeTurnStartTick). */
+  | { kind: 'status_expired'; actorId: ActorId; tags: ExpiringStatusKind[] }
+  /** Knockback was attempted but the target did not move. */
+  | {
+      kind: 'knockback_failed'
+      attackerId: ActorId
+      targetId: ActorId
+      reason: 'map_edge' | 'cell_blocked'
+    }
+  /** Full round just completed; only when sudden death rules are off for this match. */
+  | { kind: 'round_complete'; round: number }
 
 /** One battle log line; `subject` selects team tint in the UI (omit for neutral flavor text). */
 export interface BattleLogEntry {
@@ -413,7 +435,7 @@ export interface MatchSettings {
   humanActorId: ActorId
   /** Always true when built via `match-roster` (`coerceFriendlyFire`); kept for saves / hashing. Combat does not restrict hits by team. */
   friendlyFire: boolean
-  /** If set, clamped 7–15; else computed from level + actor count. */
+  /** If set, clamped 7–19; else computed from level + actor count. */
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty
   perCpuDifficulty?: Partial<Record<ActorId, CpuDifficulty>>

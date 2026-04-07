@@ -53,18 +53,19 @@
   background: linear-gradient(180deg, var(--bs-void) 0%, var(--bs-bg) 100%);
 }
 
+/* Matches loadout `.ls-phase` / `.ls-phase__btn` (Traits / Skills / Match). */
 .battle-surface__exit {
   margin: 0;
-  padding: 0.2rem 0.35rem;
+  padding: 0.15rem 0;
   border: none;
-  background: transparent;
+  background: none;
   color: var(--bs-muted);
   font-family: var(--bs-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 0.58rem;
+  font-weight: inherit;
+  letter-spacing: 0.2em;
   cursor: pointer;
-  transition: color 0.15s ease, opacity 0.15s ease;
+  transition: color 0.12s ease;
 }
 
 .battle-surface__exit:hover {
@@ -126,7 +127,8 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(7.5rem, 11vw) minmax(0, 1fr) minmax(8rem, 13vw);
+  /* Left rail wide enough for meter tracks; values use a fixed `ch` column so bars stay long + aligned. */
+  grid-template-columns: minmax(9.5rem, 14vw) minmax(0, 1fr) minmax(9rem, 15vw);
   gap: 0;
 }
 
@@ -146,6 +148,10 @@
   padding-left: 0.5rem;
 }
 
+.battle-surface__edge--left {
+  padding: 0;
+}
+
 .battle-surface__board {
   min-width: 0;
   min-height: 0;
@@ -155,9 +161,10 @@
   padding: 0.35rem 0.5rem;
 }
 
-/* Actor column — lines only, no cards */
+/* Actor column — flat rows, no framed panels */
 .bs-actor {
-  margin-bottom: 0.85rem;
+  margin-bottom: 0;
+  padding: .25rem;
 }
 
 .bs-actor[role='button'] {
@@ -174,10 +181,6 @@
   opacity: 0.94;
 }
 
-.bs-actor:last-child {
-  margin-bottom: 0;
-}
-
 .bs-actor__label-row {
   display: flex;
   align-items: center;
@@ -190,8 +193,9 @@
 .bs-actor__label {
   display: block;
   font-family: var(--bs-mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.2em;
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--actor-accent, var(--bs-muted));
   margin-bottom: 0.35rem;
@@ -267,8 +271,27 @@
   --actor-accent-dim: rgba(184, 232, 96, 0.2);
 }
 
-.battle-surface__combatants {
-  flex-shrink: 0;
+/* Defeated — still listed for context; mute team tint on label + meters */
+.bs-actor--dead {
+  --actor-accent: rgba(44, 50, 58, 0.97);
+  --actor-accent-dim: rgba(44, 50, 58, 0.28);
+}
+
+.bs-actor--you.bs-actor--dead .bs-actor__label {
+  text-shadow: none;
+}
+
+.bs-actor--dead .bs-meter--stamina .bs-meter__fill {
+  background: var(--actor-accent);
+}
+
+.battle-surface__edge--left .battle-surface__combatants {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Log area: controls stay visible; only the message list scrolls */
@@ -278,6 +301,11 @@
   display: flex;
   flex-direction: column;
   margin-top: 0.75rem;
+}
+
+.battle-log__panel--right {
+  margin-top: 0.65rem;
+  min-height: 5rem;
 }
 
 .battle-log__controls {
@@ -500,9 +528,8 @@
   text-shadow: 0 0 10px var(--actor-accent-dim);
 }
 
-/* Current turn — readable at a glance (panel + team tint). */
+/* Current turn — flat accent strip, no rounded panel */
 .bs-actor.is-active {
-  border-radius: 3px;
   background: linear-gradient(90deg, var(--actor-accent-dim) 0%, transparent 82%);
 }
 
@@ -512,9 +539,10 @@
 
 .bs-meter {
   display: grid;
-  grid-template-columns: 1.15rem 1fr auto;
+  /* Fixed fraction column so bar (`1fr`) width does not change when max HP/MP/SP digit count differs. */
+  grid-template-columns: 1.05rem minmax(0, 1fr) 5ch;
   align-items: center;
-  gap: 0.25rem 0.35rem;
+  gap: 0.25rem 0.3rem;
   margin-top: 0.25rem;
 }
 
@@ -529,8 +557,10 @@
 }
 
 .bs-meter__track {
-  height: 2px;
-  background: rgba(255, 255, 255, 0.06);
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(226, 232, 240, 0.14);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
   position: relative;
   overflow: hidden;
 }
@@ -540,18 +570,19 @@
   left: 0;
   top: 0;
   bottom: 0;
+  border-radius: 1px;
   background: var(--actor-accent, var(--bs-accent));
-  opacity: 0.85;
+  opacity: 0.92;
   transition: width 0.2s ease;
 }
 
 .bs-meter--mp .bs-meter__fill {
-  opacity: 0.65;
+  opacity: 0.78;
 }
 
 .bs-meter--stamina .bs-meter__fill {
   background: #8b9a6e;
-  opacity: 0.75;
+  opacity: 0.88;
 }
 
 .bs-meter__v {
@@ -560,19 +591,13 @@
   font-variant-numeric: tabular-nums;
   color: var(--bs-muted);
   letter-spacing: 0.04em;
-}
-
-.bs-actor__meta {
-  margin: 0.4rem 0 0;
-  font-family: var(--bs-mono);
-  font-size: 0.55rem;
-  line-height: 1.35;
-  letter-spacing: 0.04em;
-  color: var(--bs-muted);
+  text-align: right;
+  min-width: 0;
 }
 
 /* Action stack — flat, sharp, no pill chrome */
 .bs-actions {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 0.28rem;
@@ -648,26 +673,29 @@
   opacity: 0.9;
 }
 
-/* Bottom status — one line, ellipsis */
+/* Bottom status — skill help + mode hints (can wrap / scroll) */
 .battle-surface__status {
   flex-shrink: 0;
   min-height: 1.75rem;
+  max-height: 5rem;
   padding: 0.25rem 0.65rem;
   border-top: 1px solid var(--bs-line);
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 0.15rem;
+  overflow: hidden;
 }
 
 .battle-surface__hint {
   margin: 0;
   font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
+  line-height: 1.38;
   color: var(--bs-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-y: auto;
+  max-height: 4.5rem;
 }
 
 .battle-surface__hint.is-error {
@@ -687,7 +715,7 @@
 
 @media (max-width: 720px) {
   .battle-surface__matrix {
-    grid-template-columns: minmax(6rem, 18vw) minmax(0, 1fr) minmax(6.5rem, 22vw);
+    grid-template-columns: minmax(8rem, 22vw) minmax(0, 1fr) minmax(7rem, 24vw);
   }
 
   .bs-btn {

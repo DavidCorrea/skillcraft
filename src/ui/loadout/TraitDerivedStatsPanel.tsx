@@ -58,7 +58,7 @@ export function TraitDerivedStatsPanel({
       <header className="ls-derived__intro">
         <h3 className="ls-derived__heading">Battle numbers from traits</h3>
         <p className="ls-derived__lede">
-          Live values and what +1 to each trait does. Hover a trait row to preview which numbers would change.
+          Hover a trait row to preview which values would change after +1.
         </p>
       </header>
       <div className="ls-derived__grid">

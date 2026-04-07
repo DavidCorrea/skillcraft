@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { PatternOffset, SkillId, SkillLoadoutEntry, TraitPoints } from '../game/types'
-import type { MatchDraft } from './MatchSetupScreen'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { BattleConfig, PatternOffset, SkillId, SkillLoadoutEntry, TraitPoints } from '../game/types'
+import { MatchSetupForm, type MatchSetupFormHandle } from './MatchSetupScreen'
 import type { SkillDefinition } from '../game/skills'
 import {
   BASELINE_SKILL_LOADOUT_POINT_COST,
@@ -358,9 +358,9 @@ function traitHint(
 }
 
 export function LoadoutScreen({
-  onContinueToMatch,
+  onStartBattle,
 }: {
-  onContinueToMatch: (draft: MatchDraft) => void
+  onStartBattle: (config: BattleConfig) => void
 }) {
   const stored = useMemo(() => loadStored(), [])
   const [level, setLevel] = useState(() =>
@@ -399,7 +399,21 @@ export function LoadoutScreen({
   const [presetSelection, setPresetSelection] = useState<'custom' | string>('custom')
   const [presetMenuOpen, setPresetMenuOpen] = useState(false)
   const presetComboRef = useRef<HTMLDivElement>(null)
-  const [phase, setPhase] = useState<'traits' | 'skills'>('traits')
+  const [phase, setPhase] = useState<'traits' | 'skills' | 'match'>('traits')
+  const matchFormRef = useRef<MatchSetupFormHandle>(null)
+  const [matchValidity, setMatchValidity] = useState<{
+    canStart: boolean
+    teamError: string | null
+  }>({ canStart: false, teamError: null })
+
+  const handleMatchValidityChange = useCallback(
+    (v: { canStart: boolean; teamError: string | null }) => {
+      setMatchValidity((prev) =>
+        prev.canStart === v.canStart && prev.teamError === v.teamError ? prev : v,
+      )
+    },
+    [],
+  )
   const [traitDerivedHoverKey, setTraitDerivedHoverKey] = useState<TraitKey | null>(null)
   const traitDerivedHoverLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -520,6 +534,12 @@ export function LoadoutScreen({
     }
   })
 
+  const matchDraft = {
+    level,
+    playerLoadout: entries,
+    playerTraits: { ...traits },
+  }
+
   const maxSkillSlots = maxSkillsForLevel(level)
   const err = validateLoadout(level, entries, maxSkillSlots, traits)
   const total = totalLoadoutPoints(entries, traits)
@@ -536,7 +556,6 @@ export function LoadoutScreen({
   const previewStrikeRhythm2 = totalStrikeDamage(traits, 0, 1)
   const pointsPct = level > 0 ? Math.min(100, (total / level) * 100) : 0
   const remaining = level - total
-  const budgetLeftForSkills = level - traitPts
 
   const resolvedSkillId =
     configureSkillId ??
@@ -803,14 +822,98 @@ export function LoadoutScreen({
     setConfigureSkillId(null)
   }
 
-  const footerHintTraits = traitsStepErr
-    ? traitsStepErr
-    : `${budgetLeftForSkills} pts remain for skills.`
+  const pointsSpentPhrase = (n: number, on: string) =>
+    `${n} ${n === 1 ? 'point' : 'points'} spent on ${on}`
+  const budgetSpendSummary = `${pointsSpentPhrase(traitPts, 'Traits')}, ${pointsSpentPhrase(skillPts, 'Skills')}.`
 
-  const footerHintSkills = err ? err : remaining >= 0 ? `${remaining} unspent` : ''
+  const footerHintTraits = traitsStepErr ? `${budgetSpendSummary} ${traitsStepErr}` : budgetSpendSummary
+
+  const footerHintSkills = (() => {
+    const extra = err ? err : remaining >= 0 ? `${remaining} unspent` : ''
+    return extra ? `${budgetSpendSummary} ${extra}` : budgetSpendSummary
+  })()
+
+  const footerHintMatch =
+    matchValidity.teamError ??
+    'Pick a scenario (or Custom) for roster, CPU tiers, board, and sudden death. CPUs roll random loadouts when the battle starts.'
+
+  const loadoutBlockedForMatch = !!err || !!traitsStepErr
+  const matchNavTitle = loadoutBlockedForMatch
+    ? 'Fix trait/skill budget and loadout errors first'
+    : undefined
+
+  const guideContext =
+    phase === 'match' ? (
+      <>
+        <p className="ls-modal__note">
+          Assign each fighter slot to a team letter. Same letter means allies; you need at least two different teams.
+          CPUs get random loadouts when the battle starts.
+        </p>
+        <p className="ls-modal__note">
+          Each <strong>scenario</strong> is a fantasy preset: roster, whether CPUs share one difficulty or have their own,
+          board size (or auto), and sudden death. Use <strong>Fighters</strong> / <strong>Teams</strong> for a fresh
+          balanced split; <strong>Custom</strong> keeps your current sheet so you can tweak anything. Skills, Strikes, and
+          tile hazards can hit anyone in range — allies and yourself included.
+        </p>
+        <p className="ls-modal__note">
+          <strong>CPU difficulty</strong> applies per computer fighter: how they roll random loadouts and traits, and how
+          strong their lookahead is when it is their turn. Non-Easy levels use deeper search in <strong>1v1</strong> than
+          with <strong>three or more fighters</strong> (branching is higher in big matches). Nightmare &gt; Hard &gt;
+          Normal; Easy sometimes picks among legal moves at random.
+        </p>
+        <p className="ls-modal__note">
+          <strong>Team colors</strong> sit under the roster in the center column. <strong>More options</strong> (right on
+          wide layouts) has board size and sudden death.
+        </p>
+        <p className="ls-modal__note">
+          <strong>Sudden death</strong> (optional): after N full rounds (everyone acts once per round), a storm appears.
+          The kill zone is shown right away; the <strong>first</strong> full-round boundary after that is warning-only (no
+          storm damage). Afterward, storm damage and &quot;skip&quot; rounds <strong>alternate</strong>.{' '}
+          <strong>Pulsing</strong> red storm tiles mean the next boundary will <em>not</em> storm-tick;{' '}
+          <strong>solid</strong> red means it will. The safe zone shrinks over time. Storm damage ignores armor and only
+          burns shield, then HP.
+        </p>
+      </>
+    ) : (
+      <ol className="ls-modal__guide-list">
+        <li>
+          <strong>Traits, skills, then match.</strong> Use the steps across the top. Match stays locked until your
+          loadout is valid. Start battle runs from the Match step.
+        </li>
+        <li>
+          <strong>One budget.</strong> Level is your total point pool. The meter shows total spent vs level; the footer
+          breaks down trait vs skill spend.
+        </li>
+        <li>
+          <strong>Trait steppers.</strong> Each point costs 1 level budget. Subtitles under each row and the battle
+          numbers panel below the grid show live values and what each trait changes.
+        </li>
+        <li>
+          <strong>Skill slots.</strong> You can equip up to {maxSkillSlots} skills at this level. Adding a skill needs
+          enough remaining budget for a minimal configuration.
+        </li>
+        <li>
+          <strong>Per-skill tuning.</strong> For each equipped skill: pattern (shape and multi-hit), status stacks, mana
+          discount, and extra range (when the skill is not self-target). The editor shows element, loadout cost, and
+          effective cast range.
+        </li>
+        <li>
+          <strong>Casting in battle.</strong> Skill shapes anchor on the cell you click; cast range is measured from your
+          position to that anchor.
+        </li>
+        <li>
+          <strong>Randomize.</strong> The dice button spends your full level budget on traits, skills, and configs at
+          random.
+        </li>
+        <li>
+          <strong>Reset.</strong> The undo button clears traits, unequips all skills, and resets every skill config to
+          base values. Your level (LV) stays the same.
+        </li>
+      </ol>
+    )
 
   return (
-    <div className="loadout-surface">
+    <div className={`loadout-surface${phase === 'match' ? ' match-setup' : ''}`}>
       <header className="ls-top ls-top-wrap">
         <div className="ls-phase">
           <button
@@ -835,6 +938,21 @@ export function LoadoutScreen({
             title={traitsStepErr ?? undefined}
           >
             Skills
+          </button>
+          <span className="ls-phase__sep" aria-hidden>
+            /
+          </span>
+          <button
+            type="button"
+            className={`ls-phase__btn${phase === 'match' ? ' is-current' : ''}`}
+            disabled={loadoutBlockedForMatch}
+            onClick={() => {
+              if (!loadoutBlockedForMatch) setPhase('match')
+            }}
+            aria-current={phase === 'match' ? 'step' : undefined}
+            title={matchNavTitle}
+          >
+            Match
           </button>
         </div>
 
@@ -873,7 +991,7 @@ export function LoadoutScreen({
               />
             </div>
             <span className={`ls-meter__nums${err || remaining < 0 || traitsStepErr ? ' is-err' : ''}`}>
-              {total}/{level} · tr{traitPts} · sk{skillPts}
+              {total}/{level}
             </span>
           </div>
           <button
@@ -965,49 +1083,10 @@ export function LoadoutScreen({
           </div>
         </div>
 
-        <GameGuide
-          contextContent={
-            <ol className="ls-modal__guide-list">
-              <li>
-                <strong>Traits, then skills.</strong> Work in two steps. Skills stays locked until traits + skills
-                spend is at most your level. Continue only works within budget; Fight runs full validation (at least
-                one skill, valid patterns, etc.).
-              </li>
-              <li>
-                <strong>One budget.</strong> Level is your total point pool. The meter shows total/level and tr
-                (traits) vs sk (skills).
-              </li>
-              <li>
-                <strong>Trait steppers.</strong> Each point costs 1 level budget. Subtitles under each row and the battle
-                numbers panel below the grid show live values and what each trait changes.
-              </li>
-              <li>
-                <strong>Skill slots.</strong> You can equip up to {maxSkillSlots} skills at this level. Adding a skill
-                needs enough remaining budget for a minimal configuration.
-              </li>
-              <li>
-                <strong>Per-skill tuning.</strong> For each equipped skill: pattern (shape and multi-hit), status
-                stacks, mana discount, and extra range (when the skill is not self-target). The editor shows element,
-                loadout cost, and effective cast range.
-              </li>
-              <li>
-                <strong>Casting in battle.</strong> Skill shapes anchor on the cell you click; cast range is measured
-                from your position to that anchor.
-              </li>
-              <li>
-                <strong>Randomize.</strong> The dice button spends your full level budget on traits, skills, and
-                configs at random.
-              </li>
-              <li>
-                <strong>Reset.</strong> The undo button clears traits, unequips all skills, and resets every skill config
-                to base values. Your level (LV) stays the same.
-              </li>
-            </ol>
-          }
-        />
+        <GameGuide contextContent={guideContext} />
       </header>
 
-      <div className="ls-body">
+      <div className="ls-body" hidden={phase === 'match'}>
         {phase === 'traits' ? (
           <div className="ls-traits-phase">
             <div className="ls-traits">
@@ -1270,34 +1349,60 @@ export function LoadoutScreen({
         )}
       </div>
 
+      <div className="ls-body ls-body--match" hidden={phase !== 'match'}>
+        <MatchSetupForm
+          ref={matchFormRef}
+          draft={matchDraft}
+          onValidityChange={handleMatchValidityChange}
+        />
+      </div>
+
       <footer className="ls-foot">
-        <p className={`ls-foot__hint${phase === 'traits' && traitsStepErr ? ' is-err' : ''}${phase === 'skills' && !!err ? ' is-err' : ''}`}>
-          {phase === 'traits' ? footerHintTraits : footerHintSkills}
+        <p
+          className={`ls-foot__hint${
+            (phase === 'traits' && traitsStepErr) || (phase === 'skills' && !!err) || (phase === 'match' && !!matchValidity.teamError)
+              ? ' is-err'
+              : ''
+          }`}
+        >
+          {phase === 'traits' ? footerHintTraits : phase === 'skills' ? footerHintSkills : footerHintMatch}
         </p>
         <div className="ls-foot__actions">
-          {phase === 'skills' ? (
-            <button type="button" className="ls-btn-ghost" onClick={() => setPhase('traits')}>
-              Back
-            </button>
-          ) : null}
-          {phase === 'traits' ? (
+          {phase === 'match' ? (
+            <>
+              <button type="button" className="ls-btn-ghost" onClick={() => setPhase('skills')}>
+                Back
+              </button>
+              <button
+                type="button"
+                className="ls-btn-primary"
+                disabled={!matchValidity.canStart}
+                onClick={() => {
+                  const cfg = matchFormRef.current?.tryConfirm()
+                  if (cfg) onStartBattle(cfg)
+                }}
+              >
+                PLAY
+              </button>
+            </>
+          ) : phase === 'skills' ? (
+            <>
+              <button type="button" className="ls-btn-ghost" onClick={() => setPhase('traits')}>
+                Back
+              </button>
+              <button
+                type="button"
+                className="ls-btn-primary"
+                disabled={loadoutBlockedForMatch}
+                title={matchNavTitle}
+                onClick={() => setPhase('match')}
+              >
+                CONTINUE
+              </button>
+            </>
+          ) : (
             <button type="button" className="ls-btn-primary" disabled={!!traitsStepErr} onClick={() => setPhase('skills')}>
               Continue
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="ls-btn-primary"
-              disabled={!!err}
-              onClick={() => {
-                onContinueToMatch({
-                  level,
-                  playerLoadout: entries,
-                  playerTraits: { ...traits },
-                })
-              }}
-            >
-              Fight
             </button>
           )}
         </div>

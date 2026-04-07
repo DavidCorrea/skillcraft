@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assignCallsigns,
+  balancedTeamIdsForSplit,
   buildCustomMatchSettings,
   coerceFriendlyFire,
   resolveTeamColorSlotForTeamId,
@@ -45,12 +46,47 @@ describe('validateCustomTeamIds', () => {
 
   it('rejects wrong lengths', () => {
     expect(validateCustomTeamIds([0])).not.toBeNull()
-    expect(validateCustomTeamIds([0, 1, 2, 3, 0])).not.toBeNull()
+    expect(validateCustomTeamIds([0, 1, 2, 3, 4, 5, 6, 7, 0])).not.toBeNull()
   })
 
-  it('rejects non-integer or negative team ids', () => {
+  it('accepts up to eight fighters with team ids 0–7', () => {
+    expect(validateCustomTeamIds([0, 1, 2, 3, 4, 5, 6, 7])).toBeNull()
+  })
+
+  it('rejects non-integer, negative, or out-of-range team ids', () => {
     expect(validateCustomTeamIds([0, 0.5])).not.toBeNull()
     expect(validateCustomTeamIds([-1, 0])).not.toBeNull()
+    expect(validateCustomTeamIds([0, 8])).not.toBeNull()
+  })
+})
+
+describe('balancedTeamIdsForSplit', () => {
+  it('returns empty for invalid arguments', () => {
+    expect(balancedTeamIdsForSplit(1, 2)).toEqual([])
+    expect(balancedTeamIdsForSplit(4, 1)).toEqual([])
+    expect(balancedTeamIdsForSplit(4, 5)).toEqual([])
+    expect(balancedTeamIdsForSplit(9, 2)).toEqual([])
+  })
+
+  it('produces valid rosters with exact team count and balanced sizes', () => {
+    expect(balancedTeamIdsForSplit(2, 2)).toEqual([0, 1])
+    expect(balancedTeamIdsForSplit(4, 2)).toEqual([0, 0, 1, 1])
+    expect(balancedTeamIdsForSplit(4, 4)).toEqual([0, 1, 2, 3])
+    expect(balancedTeamIdsForSplit(6, 3)).toEqual([0, 0, 1, 1, 2, 2])
+    expect(balancedTeamIdsForSplit(7, 3)).toEqual([0, 0, 0, 1, 1, 2, 2])
+    expect(balancedTeamIdsForSplit(8, 3)).toEqual([0, 0, 0, 1, 1, 1, 2, 2])
+    for (const [f, t] of [
+      [2, 2],
+      [4, 2],
+      [4, 4],
+      [8, 3],
+      [8, 8],
+    ] as const) {
+      const ids = balancedTeamIdsForSplit(f, t)
+      expect(validateCustomTeamIds(ids)).toBeNull()
+      expect(ids).toHaveLength(f)
+      expect(new Set(ids).size).toBe(t)
+    }
   })
 })
 
@@ -189,5 +225,18 @@ describe('buildCustomMatchSettings', () => {
         cpuDifficulties: ['easy', 'hard'],
       }),
     ).toThrow(/cpuDifficulties/)
+  })
+
+  it('builds a valid eight-fighter FFA roster', () => {
+    const teamIds = [0, 1, 2, 3, 4, 5, 6, 7]
+    const cpuBuilds = teamIds.slice(1).map(() => ({ loadout: emptyLoadout, traits }))
+    const ms = buildCustomMatchSettings({
+      humanLoadout: emptyLoadout,
+      humanTraits: traits,
+      cpuBuilds,
+      teamIds,
+      defaultCpuDifficulty: 'normal',
+    })
+    expect(ms.roster).toHaveLength(8)
   })
 })

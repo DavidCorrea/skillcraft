@@ -442,6 +442,16 @@ export function formatClassicRow(
     case 'tie':
       return { text: 'Everyone is down — tie game.' }
 
+    case 'lingering_expired':
+    case 'round_complete':
+      return { text: entry.text }
+
+    case 'status_expired':
+      return { text: entry.text, subject: d.actorId }
+
+    case 'knockback_failed':
+      return { text: entry.text, subject: d.attackerId }
+
     default:
       return null
   }

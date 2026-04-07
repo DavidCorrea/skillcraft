@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { ActorId, BattleConfig, Coord, GameState, SkillId } from '../game/types'
+import type { ActorId, BattleConfig, Coord, GameState, SkillId, TeamColorSlot } from '../game/types'
 import { coordKey, parseKey } from '../game/board'
 import {
   applyAction,
@@ -21,11 +21,12 @@ import {
   castResourceCostRange,
   effectiveCastRangeForLoadout,
   entryPointCost,
+  formatSkillBattleHelp,
   getSkillDef,
   minCastManhattanForLoadout,
 } from '../game/skills'
-import { STAMINA_REGEN_PER_TURN } from '../game/traits'
-import { HolographicBattleBoard, type BoardPiece } from './board'
+import { HolographicBattleBoard, type BattleSpeechBubble, type BoardPiece } from './board'
+import { bubbleCandidatesForNewLogEntries } from './battle/bubbleCandidates'
 import {
   castResolveStaggerMap,
   patternCellsForCast,
@@ -53,7 +54,25 @@ const MS = {
 } as const
 
 const LOG_MODE_KEY = 'skillcraft-battle-log-mode'
+const BUBBLES_KEY = 'skillcraft-battle-board-bubbles'
 type LogMode = 'classic' | 'broadcast'
+
+/** Matches combatant panel / board token hues (`bs-actor--t*`). */
+const BATTLE_TEAM_HEX: readonly string[] = [
+  '#6eb8c8',
+  '#c97a72',
+  '#7ab894',
+  '#d4b060',
+  '#b8a0e8',
+  '#e8a868',
+  '#e890b8',
+  '#b8e860',
+]
+
+function teamPaletteHex(slot: number): string {
+  const s = Math.min(7, Math.max(0, Math.floor(slot)))
+  return BATTLE_TEAM_HEX[s] ?? '#6eb8c8'
+}
 
 function logRowClassBroadcast(
   row: BroadcastRow,
@@ -141,6 +160,17 @@ export function BattleScreen({
   const [logActorFilter, setLogActorFilter] = useState<Set<ActorId> | null>(null)
   /** Broadcast only: play-by-play lines (`voice === 'caster'`). */
   const [logShowCaster, setLogShowCaster] = useState(true)
+  const [boardBubblesOn, setBoardBubblesOn] = useState(() => {
+    try {
+      return localStorage.getItem(BUBBLES_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  const [speechBubbles, setSpeechBubbles] = useState<BattleSpeechBubble[]>([])
+  const prevLogLenRef = useRef(game.log.length)
+  /** Footer + native tooltip while pointer is over a skill row (your turn). */
+  const [hoveredSkillHelpId, setHoveredSkillHelpId] = useState<SkillId | null>(null)
 
   /** CPU worker search window — ring clears when `requestCpuPick` settles, not when board FX end. */
   const [cpuThink, setCpuThink] = useState<{ actorId: ActorId; deadline: number } | null>(null)
@@ -151,6 +181,16 @@ export function BattleScreen({
     (teamId: number) => resolveTeamColorSlotForTeamId(teamId, normalizedMatch.teamColorSlotByTeamId),
     [normalizedMatch.teamColorSlotByTeamId],
   )
+
+  const playerPaletteSlot = useMemo(
+    () => teamSlot(game.teamByActor[game.humanActorId] ?? 0),
+    [game.teamByActor, game.humanActorId, teamSlot],
+  )
+  const playerHintColor = teamPaletteHex(playerPaletteSlot)
+
+  useEffect(() => {
+    if (game.turn !== game.humanActorId) setHoveredSkillHelpId(null)
+  }, [game.turn, game.humanActorId])
 
   const classicRows = useMemo(() => {
     const out: { text: string; subject?: ActorId; key: number }[] = []
@@ -222,6 +262,48 @@ export function BattleScreen({
       /* ignore */
     }
   }, [logMode])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BUBBLES_KEY, boardBubblesOn ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [boardBubblesOn])
+
+  useEffect(() => {
+    if (!boardBubblesOn) setSpeechBubbles([])
+  }, [boardBubblesOn])
+
+  useEffect(() => {
+    const g = gameRef.current
+    const len = g.log.length
+    if (len < prevLogLenRef.current) {
+      prevLogLenRef.current = len
+      setSpeechBubbles([])
+      return
+    }
+    const prev = prevLogLenRef.current
+    prevLogLenRef.current = len
+    if (!boardBubblesOn || prev >= len) return
+    const candidates = bubbleCandidatesForNewLogEntries(prev, g.log, g, logMode)
+    if (candidates.length === 0) return
+    const newBubbles: BattleSpeechBubble[] = candidates.map((c, j) => ({
+      id: `${Date.now()}-${j}-${Math.random().toString(36).slice(2, 9)}`,
+      actorId: c.actorId,
+      text: c.text,
+      teamSlot: teamSlot(g.teamByActor[c.actorId] ?? 0) as TeamColorSlot,
+    }))
+    setSpeechBubbles((cur) => [...cur, ...newBubbles].slice(-8))
+    const timers = newBubbles.map((b) =>
+      window.setTimeout(() => {
+        setSpeechBubbles((cur) => cur.filter((x) => x.id !== b.id))
+      }, 1500),
+    )
+    return () => {
+      for (const t of timers) window.clearTimeout(t)
+    }
+  }, [game.log.length, boardBubblesOn, logMode, teamSlot])
 
   useEffect(() => {
     if (!cpuThink) return
@@ -555,13 +637,32 @@ export function BattleScreen({
     }
   }
 
-  const hint =
-    message ??
-    (mode === 'move'
-      ? `Up to ${game.actors[game.humanActorId]!.moveMaxSteps} steps per move (no diagonals).`
-      : mode === 'cast' && castSkillId
-        ? 'Amber outline = valid anchor. Dim = range only.'
-        : 'Select move, skip, or a skill.')
+  const contextualHint = useMemo(() => {
+    const human = game.humanActorId
+    if (game.winner || game.tie) {
+      return 'Battle finished — Quit returns to loadout.'
+    }
+    if (game.turn !== human) {
+      return `${battlePanelLabel(game, game.turn)} is acting. Follow the board and log.`
+    }
+    if (hoveredSkillHelpId) {
+      const entry = game.loadouts[human]?.find((x) => x.skillId === hoveredSkillHelpId)
+      if (entry) {
+        const def = getSkillDef(hoveredSkillHelpId)
+        return `${def.name} — ${formatSkillBattleHelp(def)}`
+      }
+    }
+    if (mode === 'move') {
+      return `Move: click a highlighted tile. Orthogonal only, up to ${game.actors[human]!.moveMaxSteps} steps; each step costs stamina.`
+    }
+    if (mode === 'cast' && castSkillId) {
+      const def = getSkillDef(castSkillId)
+      return `Casting ${def.name}: bright outline = legal anchor; dim tiles = in range only. Click an anchor to cast. ${formatSkillBattleHelp(def)}`
+    }
+    return 'Your turn: choose Move, Skip, or a skill. Hover a skill to see its full description here.'
+  }, [game, hoveredSkillHelpId, mode, castSkillId])
+
+  const hint = message ?? contextualHint
 
   const railTitle = game.tie
     ? { className: 'battle-surface__title is-end', text: 'TIE' }
@@ -579,8 +680,13 @@ export function BattleScreen({
   return (
     <div className="battle-surface">
       <header className="battle-surface__rail">
-        <button type="button" className="battle-surface__exit" onClick={onExit}>
-          Loadout
+        <button
+          type="button"
+          className="battle-surface__exit"
+          onClick={onExit}
+          aria-label="Quit battle and return to loadout"
+        >
+          Quit
         </button>
         <div className="battle-surface__phase">
           <h1 className={railTitle.className}>{railTitle.text}</h1>
@@ -621,25 +727,23 @@ export function BattleScreen({
       </header>
 
       <div className="battle-surface__matrix">
-        <aside
-          className="battle-surface__edge battle-surface__edge--left"
-          aria-label="Combatants and battle log"
-        >
+        <aside className="battle-surface__edge battle-surface__edge--left" aria-label="Combatants">
           <div className="battle-surface__combatants">
             {game.turnOrder.map((id) => {
               const a = game.actors[id]!
-              if (a.hp <= 0) return null
+              const dead = a.hp <= 0
               const you = id === game.humanActorId
               const label = battlePanelLabel(game, id)
+              const isTurn = !dead && !game.winner && !game.tie && game.turn === id
               return (
                 <div
                   key={id}
                   role="button"
                   tabIndex={0}
-                  className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${!game.winner && !game.tie && game.turn === id ? ' is-active' : ''}`}
-                  aria-current={!game.winner && !game.tie && game.turn === id ? 'true' : undefined}
+                  className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${dead ? ' bs-actor--dead' : ''}${isTurn ? ' is-active' : ''}`}
+                  aria-current={isTurn ? 'true' : undefined}
                   aria-busy={cpuThink?.actorId === id ? true : undefined}
-                  aria-label={`Inspect ${label}`}
+                  aria-label={dead ? `Inspect ${label} (defeated)` : `Inspect ${label}`}
                   onClick={() => setInspectActorId(id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -661,15 +765,153 @@ export function BattleScreen({
                   <BsMeter kind="hp" current={a.hp} max={a.maxHp} />
                   <BsMeter kind="mana" current={a.mana} max={a.maxMana} />
                   <BsMeter kind="stamina" current={a.stamina} max={a.maxStamina} />
-                  <p className="bs-actor__meta">
-                    +{a.manaRegenPerTurn} MP · +{STAMINA_REGEN_PER_TURN} SP/turn · {a.moveMaxSteps} step
-                    {a.moveMaxSteps === 1 ? '' : 's'}
-                  </p>
                 </div>
               )
             })}
           </div>
-          <div className="battle-log__panel">
+        </aside>
+
+        <div className="battle-surface__board">
+          <HolographicBattleBoard
+            size={game.size}
+            cells={cells}
+            getCellClassSuffix={cellClassSuffix}
+            onCellClick={onCellClick}
+            hoveredKey={hoveredKey}
+            onHoverChange={setHoveredKey}
+            pulseKey={pulseKey}
+            pathFrom={pathFrom}
+            pathTos={pathTos}
+            pieces={boardPieces}
+            hiddenPieceActor={hiddenPieceActor}
+            boardFx={boardFx}
+            previewPatternKeys={previewPatternKeys}
+            sceneCastElement={sceneCastElement}
+            getCellTooltip={(c) => describeBattleCellTooltip(game, c)}
+            playerHintColor={playerHintColor}
+            speechBubbles={boardBubblesOn ? speechBubbles : null}
+          />
+        </div>
+
+        <aside
+          className="battle-surface__edge battle-surface__edge--right"
+          aria-label="Commands and battle log"
+        >
+          <div className="bs-actions">
+            <div className="bs-actions__group">
+              <span className="bs-actions__label">Move &amp; skip</span>
+              <button
+                type="button"
+                className={`bs-btn${mode === 'move' ? ' is-on' : ''}`}
+                aria-pressed={mode === 'move'}
+                disabled={game.turn !== game.humanActorId || !!game.winner || game.tie}
+                title="Orthogonal steps only; each tile costs stamina. Click a highlighted cell."
+                onClick={() => {
+                  setMode('move')
+                  setCastSkillId(null)
+                }}
+              >
+                Move
+              </button>
+              <button
+                type="button"
+                className="bs-btn bs-btn--quiet"
+                disabled={
+                  game.turn !== game.humanActorId ||
+                  !!game.winner ||
+                  game.tie ||
+                  hasFrozen(game.actors[game.humanActorId]!)
+                }
+                title="End your turn without moving or using a skill"
+                onClick={() => {
+                  setMessage(null)
+                  setMode('idle')
+                  setCastSkillId(null)
+                  setGame((prev) => {
+                    const r = applyAction(prev, prev.humanActorId, { type: 'skip' })
+                    return r.error ? prev : r.state
+                  })
+                }}
+              >
+                Skip
+              </button>
+            </div>
+            <div
+              className="bs-actions__group bs-actions__group--skills"
+              onMouseLeave={() => setHoveredSkillHelpId(null)}
+            >
+              <span className="bs-actions__label">Skills</span>
+              {game.loadouts[game.humanActorId]!.map((e) => {
+                const me = game.actors[game.humanActorId]!
+                const def = getSkillDef(e.skillId)
+                const maxR = effectiveCastRangeForLoadout(def, e, me.traits)
+                const minR = minCastManhattanForLoadout(def, e)
+                const { min: mMin, max: mMax } = castResourceCostRange(e, def, maxR, minR)
+                const resShort = def.school === 'physical' ? 'SP' : 'MP'
+                const curRes = def.school === 'physical' ? me.stamina : me.mana
+                const silenced = def.school === 'magic' && hasSilenced(me)
+                const disarmed = def.school === 'physical' && hasDisarmed(me)
+                const blocked = silenced || disarmed
+                const canAfford = !blocked && curRes >= mMin
+                const costStr = mMin === mMax ? `${mMin}` : `${mMin}–${mMax}`
+                const isStrike = e.skillId === 'strike'
+                const strikeBlocked = isStrike && legalStrikeCasts.length === 0
+                const helpBlurb = formatSkillBattleHelp(def)
+                const costTitle = isStrike
+                  ? `Melee Strike · ${costStr} ${resShort} · ${entryPointCost(e)} pts`
+                  : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
+                const titleWhenUsable = `${costTitle} — ${helpBlurb}`
+                return (
+                  <button
+                    key={e.skillId}
+                    type="button"
+                    className={`bs-btn${mode === 'cast' && castSkillId === e.skillId ? ' is-armed' : ''}${mode === 'cast' && castSkillId === e.skillId ? ' is-on' : ''}`}
+                    aria-pressed={mode === 'cast' && castSkillId === e.skillId}
+                    disabled={
+                      game.turn !== game.humanActorId ||
+                      !!game.winner ||
+                      game.tie ||
+                      !canAfford ||
+                      strikeBlocked
+                    }
+                    title={
+                      silenced
+                        ? 'Silenced — magic skills unavailable'
+                        : disarmed
+                          ? 'Disarmed — physical skills unavailable'
+                          : strikeBlocked
+                            ? 'No legal melee anchor — stand adjacent to a valid target'
+                            : !canAfford
+                              ? `${costTitle}. ${helpBlurb}`
+                              : titleWhenUsable
+                    }
+                    onMouseEnter={() => setHoveredSkillHelpId(e.skillId)}
+                    onClick={() => {
+                      if (isStrike) {
+                        onStrikePlayer()
+                        return
+                      }
+                      setMode('cast')
+                      setCastSkillId(e.skillId)
+                    }}
+                  >
+                    {def.name} · {costStr} {resShort}
+                  </button>
+                )
+              })}
+            </div>
+            <button
+              type="button"
+              className="bs-btn bs-btn--quiet"
+              onClick={() => {
+                setMode('idle')
+                setCastSkillId(null)
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="battle-log__panel battle-log__panel--right">
             <div className="battle-log__controls">
               <div className="battle-log__toolbar" role="group" aria-label="Battle log style">
                 <span className="battle-log__toolbar-label">Log</span>
@@ -688,6 +930,15 @@ export function BattleScreen({
                   onClick={() => setLogMode('broadcast')}
                 >
                   Broadcast
+                </button>
+                <button
+                  type="button"
+                  className={`battle-log__mode${boardBubblesOn ? ' is-on' : ''}`}
+                  aria-pressed={boardBubblesOn}
+                  onClick={() => setBoardBubblesOn((v) => !v)}
+                  title="Show short speech bubbles over fighters when new log lines mention them"
+                >
+                  Bubbles
                 </button>
               </div>
               <div className="battle-log__filter" role="group" aria-label="Filter log by fighter">
@@ -732,154 +983,25 @@ export function BattleScreen({
               aria-live="polite"
               aria-label="Battle log"
             >
-            {logMode === 'classic'
-              ? filteredClassicRows.map(({ text, subject, key }) => (
-                  <p
-                    key={key}
-                    className={
-                      subject !== undefined
-                        ? `battle-log__row battle-log__row--t${teamSlot(game.teamByActor[subject] ?? 0)}`
-                        : 'battle-log__row battle-log__row--neutral'
-                    }
-                  >
-                    {text}
-                  </p>
-                ))
-              : filteredBroadcastLogRows.map(({ row, key }) => (
-                  <p key={key} className={logRowClassBroadcast(row, game, teamSlot)}>
-                    {row.text}
-                  </p>
-                ))}
-            </div>
-          </div>
-        </aside>
-
-        <div className="battle-surface__board">
-          <HolographicBattleBoard
-            size={game.size}
-            cells={cells}
-            getCellClassSuffix={cellClassSuffix}
-            onCellClick={onCellClick}
-            hoveredKey={hoveredKey}
-            onHoverChange={setHoveredKey}
-            pulseKey={pulseKey}
-            pathFrom={pathFrom}
-            pathTos={pathTos}
-            pieces={boardPieces}
-            hiddenPieceActor={hiddenPieceActor}
-            boardFx={boardFx}
-            previewPatternKeys={previewPatternKeys}
-            sceneCastElement={sceneCastElement}
-            getCellTooltip={(c) => describeBattleCellTooltip(game, c)}
-          />
-        </div>
-
-        <aside className="battle-surface__edge battle-surface__edge--right" aria-label="Commands">
-          <div className="bs-actions">
-            <div className="bs-actions__group">
-              <span className="bs-actions__label">Move &amp; skip</span>
-              <button
-                type="button"
-                className={`bs-btn${mode === 'move' ? ' is-on' : ''}`}
-                aria-pressed={mode === 'move'}
-                disabled={game.turn !== game.humanActorId || !!game.winner || game.tie}
-                onClick={() => {
-                  setMode('move')
-                  setCastSkillId(null)
-                }}
-              >
-                Move
-              </button>
-              <button
-                type="button"
-                className="bs-btn bs-btn--quiet"
-                disabled={
-                  game.turn !== game.humanActorId ||
-                  !!game.winner ||
-                  game.tie ||
-                  hasFrozen(game.actors[game.humanActorId]!)
-                }
-                title="End your turn without moving or using a skill"
-                onClick={() => {
-                  setMessage(null)
-                  setMode('idle')
-                  setCastSkillId(null)
-                  setGame((prev) => {
-                    const r = applyAction(prev, prev.humanActorId, { type: 'skip' })
-                    return r.error ? prev : r.state
-                  })
-                }}
-              >
-                Skip
-              </button>
-            </div>
-            <div className="bs-actions__group">
-              <span className="bs-actions__label">Skills</span>
-              {game.loadouts[game.humanActorId]!.map((e) => {
-                const me = game.actors[game.humanActorId]!
-                const def = getSkillDef(e.skillId)
-                const maxR = effectiveCastRangeForLoadout(def, e, me.traits)
-                const minR = minCastManhattanForLoadout(def, e)
-                const { min: mMin, max: mMax } = castResourceCostRange(e, def, maxR, minR)
-                const resShort = def.school === 'physical' ? 'SP' : 'MP'
-                const curRes = def.school === 'physical' ? me.stamina : me.mana
-                const silenced = def.school === 'magic' && hasSilenced(me)
-                const disarmed = def.school === 'physical' && hasDisarmed(me)
-                const blocked = silenced || disarmed
-                const canAfford = !blocked && curRes >= mMin
-                const costStr = mMin === mMax ? `${mMin}` : `${mMin}–${mMax}`
-                const isStrike = e.skillId === 'strike'
-                const strikeBlocked = isStrike && legalStrikeCasts.length === 0
-                return (
-                  <button
-                    key={e.skillId}
-                    type="button"
-                    className={`bs-btn${mode === 'cast' && castSkillId === e.skillId ? ' is-armed' : ''}${mode === 'cast' && castSkillId === e.skillId ? ' is-on' : ''}`}
-                    aria-pressed={mode === 'cast' && castSkillId === e.skillId}
-                    disabled={
-                      game.turn !== game.humanActorId ||
-                      !!game.winner ||
-                      game.tie ||
-                      !canAfford ||
-                      strikeBlocked
-                    }
-                    title={
-                      silenced
-                        ? 'Silenced — magic skills unavailable'
-                        : disarmed
-                          ? 'Disarmed — physical skills unavailable'
-                          : strikeBlocked
-                            ? 'No legal melee anchor — stand adjacent to a valid target'
-                            : !canAfford
-                              ? `Need at least ${mMin} ${resShort}`
-                              : isStrike
-                                ? `Melee Strike · ${costStr} ${resShort} · ${entryPointCost(e)} pts`
-                                : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
-                    }
-                    onClick={() => {
-                      if (isStrike) {
-                        onStrikePlayer()
-                        return
+              {logMode === 'classic'
+                ? filteredClassicRows.map(({ text, subject, key }) => (
+                    <p
+                      key={key}
+                      className={
+                        subject !== undefined
+                          ? `battle-log__row battle-log__row--t${teamSlot(game.teamByActor[subject] ?? 0)}`
+                          : 'battle-log__row battle-log__row--neutral'
                       }
-                      setMode('cast')
-                      setCastSkillId(e.skillId)
-                    }}
-                  >
-                    {def.name} · {costStr} {resShort}
-                  </button>
-                )
-              })}
+                    >
+                      {text}
+                    </p>
+                  ))
+                : filteredBroadcastLogRows.map(({ row, key }) => (
+                    <p key={key} className={logRowClassBroadcast(row, game, teamSlot)}>
+                      {row.text}
+                    </p>
+                  ))}
             </div>
-            <button
-              type="button"
-              className="bs-btn bs-btn--quiet"
-              onClick={() => {
-                setMode('idle')
-                setCastSkillId(null)
-              }}
-            >
-              Clear
-            </button>
           </div>
         </aside>
       </div>

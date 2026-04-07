@@ -52,6 +52,29 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
+/**
+ * Guide modal: fixed shell when open. Do not set display on closed dialog — a bare
+ * `display: flex` beats the UA `dialog:not([open]) { display: none }` and would
+ * show the panel on every page load.
+ */
+.ls-modal--sheet[open] {
+  --ls-modal-sheet-h: min(min(90dvh, 40rem), calc(100dvh - 1.5rem));
+  box-sizing: border-box;
+  width: min(36rem, 94vw);
+  height: var(--ls-modal-sheet-h);
+  max-width: min(36rem, 94vw);
+  max-height: var(--ls-modal-sheet-h);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ls-modal--sheet[open] .ls-modal__panel {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
 .ls-modal::backdrop {
   background: rgba(5, 6, 8, 0.72);
 }
@@ -99,6 +122,69 @@
 .ls-modal__close:hover {
   color: #6eb8c8;
   border-color: rgba(110, 184, 200, 0.35);
+}
+
+.ls-modal__foot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.45rem 0.65rem 0.55rem;
+  border-top: 1px solid rgba(226, 232, 240, 0.1);
+  background: #080a0d;
+}
+
+.ls-modal__close--primary {
+  min-width: 8.5rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.58rem;
+}
+
+.ls-modal__tabbar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.4rem 0.65rem 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.08);
+}
+
+.ls-modal__tab {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.65);
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.ls-modal__tab:hover {
+  color: rgba(224, 228, 234, 0.9);
+  border-color: rgba(226, 232, 240, 0.12);
+}
+
+.ls-modal__tab:focus-visible {
+  outline: 1px solid #6eb8c8;
+  outline-offset: 2px;
+}
+
+.ls-modal__tab--active {
+  color: #6eb8c8;
+  border-color: rgba(110, 184, 200, 0.35);
+  background: rgba(110, 184, 200, 0.08);
+}
+
+.ls-modal__tabpanel[hidden] {
+  display: none;
 }
 
 .ls-modal__body {
@@ -193,6 +279,59 @@
 .ls-modal__guide-list strong {
   color: #e0e4ea;
   font-weight: 600;
+}
+
+.ls-modal__guide-list--unordered {
+  list-style: disc;
+  padding-left: 1.2rem;
+}
+
+.ls-modal__details {
+  margin-bottom: 0.75rem;
+  border: 1px solid rgba(226, 232, 240, 0.08);
+  border-radius: 2px;
+  background: rgba(5, 6, 8, 0.45);
+}
+
+.ls-modal__details:last-child {
+  margin-bottom: 0;
+}
+
+.ls-modal__summary {
+  padding: 0.45rem 0.55rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.82);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ls-modal__summary::-webkit-details-marker {
+  display: none;
+}
+
+.ls-modal__summary::before {
+  content: '';
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-right: 0.45rem;
+  border-right: 1px solid rgba(148, 163, 184, 0.5);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.5);
+  transform: rotate(-45deg);
+  vertical-align: 0.1rem;
+  transition: transform 0.12s ease;
+}
+
+.ls-modal__details:not([open]) .ls-modal__summary::before {
+  transform: rotate(45deg);
+}
+
+.ls-modal__details-body {
+  padding: 0 0.55rem 0.55rem;
+  border-top: 1px solid rgba(226, 232, 240, 0.06);
 }
 
 .ls-modal__status-list {

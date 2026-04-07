@@ -42,6 +42,11 @@ export interface SkillDefinition {
   aoeBase?: number
 }
 
+/** Battle footer / tooltips: mechanical effects only (no flavor or pattern copy). */
+export function formatSkillBattleHelp(def: SkillDefinition): string {
+  return def.effectsLine.replace(/\s+/g, ' ').trim()
+}
+
 /** Physical offense: anchor must be exactly 1 Manhattan tile away (orthogonal). */
 export function isAdjacentPhysicalOffense(def: SkillDefinition): boolean {
   return def.school === 'physical' && def.damageKind === 'physical'
@@ -58,7 +63,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     school: 'physical',
     flavor: 'Steel, fist, or spur—whatever you bring, it bites at arm’s length.',
     effectsLine:
-      'Bleeding on hit (scales with Bleed bonus). Physical slow, knockback, and lifesteal apply when you invest traits.',
+      'Physical damage; scales with how little you moved this turn and your physical hit streak. Same on-hit Bleeding and trait-based slow, knockback, and lifesteal as other melee physical skills (see guide).',
     damageKind: 'physical',
   },
   {
@@ -214,7 +219,8 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'One breath held—then the next strike remembers your name.',
-    effectsLine: 'Skill focus: next offensive skill gains bonus flat damage per damage roll (consumed when you cast it).',
+    effectsLine:
+      'Stores focus on each target hit (bonus scales with Focus pattern hits on that target). That unit\'s next offensive cast consumes all their focus and adds the sum once per enemy damaged.',
     damageKind: 'none',
   },
   {
@@ -545,7 +551,10 @@ export function purgeCleanseCount(statusStacks: number): number {
   return Math.max(1, statusStacks)
 }
 
-/** Flat damage added by each Focus stack (× pattern hits) to the next offensive cast. */
+/**
+ * Base flat per Focus stack. Casting Focus stores (this value × pattern hits on that target) as skillFocus on each target.
+ * The attacker's next offensive cast strips every skillFocus from the attacker and adds the combined bonus once per enemy damaged.
+ */
 export function focusBonusDamage(statusStacks: number, statusPotency: number): number {
   const p = Math.max(1, statusStacks)
   const pot = Math.max(0, statusPotency)
