@@ -6,9 +6,15 @@ import {
   getSkillDef,
   loadoutPatternEditRadius,
   manaCostForCast,
+  minCastManhattanForLoadout,
   patternOffsetsToCountGrid,
 } from '../game/skills'
 import type { Coord, PatternOffset, SkillId, SkillLoadoutEntry } from '../game/types'
+import {
+  canSelectLoadoutPreviewAnchor,
+  defaultPreviewAnchor,
+  randomPreviewAnchorInRange,
+} from './skillLoadoutPreviewAnchor'
 
 /** Hold this long (ms) to set the cast anchor (non-self skills). */
 const LONG_PRESS_MS = 450
@@ -35,27 +41,6 @@ function displayToBoardCoord(dx: number, dy: number, boardSize: number): Coord |
   return null
 }
 
-function defaultPreviewAnchor(you: Coord, maxRange: number, selfTarget: boolean): Coord {
-  if (selfTarget) return you
-  const north: Coord = { x: you.x, y: you.y - 1 }
-  if (north.y >= 0 && manhattan(you, north) <= maxRange) return north
-  return you
-}
-
-/** Uniform random cast anchor within Manhattan range (loadout preview). */
-function randomPreviewAnchorInRange(you: Coord, maxRange: number, selfTarget: boolean, boardSize: number): Coord {
-  if (selfTarget) return you
-  const candidates: Coord[] = []
-  for (let y = 0; y < boardSize; y++) {
-    for (let x = 0; x < boardSize; x++) {
-      const c = { x, y }
-      if (manhattan(you, c) <= maxRange) candidates.push(c)
-    }
-  }
-  if (candidates.length === 0) return defaultPreviewAnchor(you, maxRange, selfTarget)
-  return candidates[Math.floor(Math.random() * candidates.length)]!
-}
-
 /**
  * Loadout-only: 15×15 frame with an 11×11 usable inner ring; game board is centered there with you at its center.
  * Hold press on an in-range tile → anchor. Click → cycle pattern weight at offsets the planner allows.
@@ -66,10 +51,9 @@ export function SkillLoadoutGrid({
   range,
   effectiveRange,
   statusStacks,
-  manaDiscount,
+  costDiscount,
   rangeTier = 0,
   aoeTier = 0,
-  selfTarget,
   skillId,
   boardSize = BOARD_SIZE,
   /** When &gt; 0 (e.g. after "Randomize everything"), pick a random legal preview anchor on mount. */
@@ -80,24 +64,32 @@ export function SkillLoadoutGrid({
   range: number
   effectiveRange?: number
   statusStacks: number
-  manaDiscount: number
+  costDiscount: number
   rangeTier?: number
   aoeTier?: number
-  selfTarget: boolean
   skillId: SkillId
   boardSize?: number
   loadoutShuffleNonce?: number
 }) {
   const r = effectiveRange ?? range
   const you = loadoutYou(boardSize)
+  const initEntry: SkillLoadoutEntry = {
+    skillId,
+    pattern,
+    statusStacks,
+    costDiscount,
+    rangeTier,
+    aoeTier,
+  }
+  const initMinR = minCastManhattanForLoadout(getSkillDef(skillId), initEntry)
   /** Framed 15×15 / inner 11×11 only fits boards up to 11×11; larger boards use a plain grid. */
   const useFramedLayout = boardSize <= LOADOUT_INNER
   const gridN = useFramedLayout ? LOADOUT_OUTER : boardSize
 
   const [anchor, setAnchor] = useState<Coord>(() =>
     loadoutShuffleNonce > 0
-      ? randomPreviewAnchorInRange(you, r, selfTarget, boardSize)
-      : defaultPreviewAnchor(you, r, selfTarget),
+      ? randomPreviewAnchorInRange(you, initMinR, r, boardSize)
+      : defaultPreviewAnchor(you, r, boardSize, initMinR),
   )
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** After a hold sets the anchor, swallow the following click so we don’t also cycle pattern. */
@@ -133,18 +125,23 @@ export function SkillLoadoutGrid({
     }
   }, [])
 
-  const resolvedAnchor = selfTarget ? you : anchor
+  const resolvedAnchor = anchor
 
   const entry: SkillLoadoutEntry = useMemo(
     () => ({
       skillId,
       pattern,
       statusStacks,
-      manaDiscount,
+      costDiscount,
       rangeTier,
       aoeTier,
     }),
-    [skillId, pattern, statusStacks, manaDiscount, rangeTier, aoeTier],
+    [skillId, pattern, statusStacks, costDiscount, rangeTier, aoeTier],
+  )
+
+  const minCastR = useMemo(
+    () => minCastManhattanForLoadout(getSkillDef(skillId), entry),
+    [skillId, entry],
   )
 
   const editRadius = useMemo(
@@ -154,8 +151,6 @@ export function SkillLoadoutGrid({
 
   const dist = manhattan(you, resolvedAnchor)
   const manaAtAnchor = manaCostForCast(entry, dist)
-  const manaAtFeet = manaCostForCast(entry, 0)
-  const manaAtMaxDist = manaCostForCast(entry, r)
 
   const hitCells = useMemo(() => {
     const set = new Set<string>()
@@ -191,9 +186,9 @@ export function SkillLoadoutGrid({
   }
 
   function trySetAnchor(board: Coord): boolean {
-    if (selfTarget) return false
     if (!inBounds(board, boardSize)) return false
-    if (manhattan(you, board) > r) return false
+    const d = manhattan(you, board)
+    if (!canSelectLoadoutPreviewAnchor(d, r, minCastR)) return false
     setAnchor(board)
     return true
   }
@@ -238,7 +233,8 @@ export function SkillLoadoutGrid({
   function renderBoardButton(bc: Coord, keySuffix: string): JSX.Element {
     const k = keySuffix
     const isYou = bc.x === you.x && bc.y === you.y
-    const inRange = manhattan(you, bc) <= r
+    const dYou = manhattan(you, bc)
+    const inRange = canSelectLoadoutPreviewAnchor(dYou, r, minCastR)
     const isAnchor = bc.x === resolvedAnchor.x && bc.y === resolvedAnchor.y
     const inPattern = hitCells.has(coordKey(bc))
     const n = patternCountAtBoard(bc)
@@ -250,29 +246,11 @@ export function SkillLoadoutGrid({
 
     let cls = 'board-reference-cell skill-cast-planner__cell pattern-cell skill-loadout-grid__cell'
     if (isYou) cls += ' ref-you'
-    if (!selfTarget && inRange) cls += ' cast-in-range'
-    if (!selfTarget && isAnchor) cls += ' skill-cast-planner__anchor'
+    if (inRange) cls += ' cast-in-range'
+    if (isAnchor) cls += ' skill-cast-planner__anchor'
     if (inAoe) cls += ' skill-loadout-grid__aoe-cell'
     if (inPattern) cls += ' cast-pattern-cell'
     if (n > 0) cls += ' on'
-
-    if (selfTarget) {
-      return (
-        <button
-          key={k}
-          type="button"
-          className={cls}
-          aria-label={
-            isYou
-              ? `You · pattern weight ${n}`
-              : `offset ${bc.x - resolvedAnchor.x},${bc.y - resolvedAnchor.y} · weight ${n}`
-          }
-          onClick={() => cyclePatternAtBoard(bc)}
-        >
-          {n > 0 ? n : isYou ? 'You' : ''}
-        </button>
-      )
-    }
 
     return (
       <button
@@ -283,7 +261,9 @@ export function SkillLoadoutGrid({
           isAnchor
             ? `Anchor · ${dist} from you · ${manaAtAnchor} mana`
             : isYou
-              ? 'You'
+              ? inRange
+                ? 'You · hold to set anchor on your tile (loadout preview)'
+                : 'You'
               : inRange
                 ? `Hold to set anchor · click to edit pattern · ${manhattan(you, bc)} tiles from you`
                 : 'Out of cast range · click still edits pattern if this offset is in the shape'
@@ -333,26 +313,6 @@ export function SkillLoadoutGrid({
 
   return (
     <div className={wrapClass}>
-      <div className="skill-loadout-grid__meta">
-        {selfTarget ? (
-          <p className="skill-cast-planner__explain hint-mini">
-            Self-cast — <strong>{manaAtFeet}</strong> mana. Violet = AoE (radius {editRadius}) · cyan = pattern.
-          </p>
-        ) : (
-          <>
-            <p className="skill-cast-planner__explain hint-mini">
-              <strong>
-                {dist}→{manaAtAnchor}
-              </strong>{' '}
-              mana · feet {manaAtFeet} · max range {r}: {manaAtMaxDist}. Cyan = pattern · slate ring = cast reach ·
-              violet = AoE (Chebyshev {editRadius} from ★).
-            </p>
-            <p className="skill-loadout-grid__hint hint-mini">
-              Hold to place anchor · click to edit shape.
-            </p>
-          </>
-        )}
-      </div>
       <div ref={boardClipRef} className="skill-loadout-grid__board-clip">
         <div
           className="board-reference-grid skill-cast-planner__grid skill-loadout-grid__board"
@@ -365,6 +325,7 @@ export function SkillLoadoutGrid({
           {gridInner}
         </div>
       </div>
+      <p className="skill-loadout-grid__hint hint-mini">Hold to place anchor · click to edit shape.</p>
     </div>
   )
 }

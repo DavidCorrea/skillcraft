@@ -106,7 +106,7 @@ function mixActor(h: bigint, a: ActorState): bigint {
   h = mixInt(h, a.moveMaxSteps)
   h = mixInt(h, a.manaRegenPerTurn)
   h = mixInt(h, a.tilesMovedThisTurn)
-  h = mixInt(h, a.strikeStreak)
+  h = mixInt(h, a.physicalStreak)
   h = mixStatuses(h, a.statuses)
   return h
 }
@@ -205,8 +205,6 @@ function actionSignature(a: import('../game/engine').GameAction): string {
       return 'skip'
     case 'move':
       return `move:${a.to.x},${a.to.y}`
-    case 'strike':
-      return `strike:${a.targetId ?? ''}`
     case 'cast':
       return `cast:${a.skillId}:${a.target.x},${a.target.y}`
     default:

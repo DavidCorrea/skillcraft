@@ -137,7 +137,7 @@ export function ActorInspectModal({
               <p className="ls-modal__note ls-modal__note--tight actor-inspect__meta-line">
                 +{actor.manaRegenPerTurn} MP/turn · +{STAMINA_REGEN_PER_TURN} SP/turn · {actor.moveMaxSteps} move step
                 {actor.moveMaxSteps === 1 ? '' : 's'} · {actor.tilesMovedThisTurn} tiles moved this turn · strike streak{' '}
-                {actor.strikeStreak}
+                {actor.physicalStreak}
               </p>
             </section>
 
@@ -195,19 +195,15 @@ export function ActorInspectModal({
                             <dd>{mpStr}</dd>
                             <dt>Range</dt>
                             <dd>{meta.rangeLabel}</dd>
-                            {!meta.selfTarget ? (
-                              <>
-                                <dt>AoE</dt>
-                                <dd>{meta.aoeLabel}</dd>
-                              </>
-                            ) : null}
-                            {!meta.selfTarget && meta.rangeTier > 0 ? (
+                            <dt>AoE</dt>
+                            <dd>{meta.aoeLabel}</dd>
+                            {meta.rangeTier > 0 ? (
                               <>
                                 <dt>Cast tier</dt>
                                 <dd>+{meta.rangeTier}</dd>
                               </>
                             ) : null}
-                            {!meta.selfTarget && meta.aoeTier > 0 ? (
+                            {meta.aoeTier > 0 ? (
                               <>
                                 <dt>AoE tier</dt>
                                 <dd>+{meta.aoeTier}</dd>
@@ -215,10 +211,10 @@ export function ActorInspectModal({
                             ) : null}
                             <dt>Status stacks</dt>
                             <dd>{meta.stacks}</dd>
-                            {e.manaDiscount > 0 ? (
+                            {e.costDiscount > 0 ? (
                               <>
                                 <dt>Mana discount</dt>
-                                <dd>−{e.manaDiscount} (loadout)</dd>
+                                <dd>−{e.costDiscount} (loadout)</dd>
                               </>
                             ) : null}
                             <dt>Loadout cost</dt>

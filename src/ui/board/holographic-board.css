@@ -250,7 +250,7 @@
   z-index: 1;
 }
 
-/** Sudden death storm — lethal Chebyshev band outside safe radius. */
+/** Sudden death storm — lethal band outside the safe radius. */
 .holo-cell--overtime-lethal {
   background: rgba(220, 60, 50, 0.14);
   box-shadow: inset 0 0 12px rgba(248, 113, 113, 0.22);

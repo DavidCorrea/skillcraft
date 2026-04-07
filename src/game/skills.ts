@@ -1,12 +1,7 @@
 import type { Coord } from './types'
 import type { Element } from './elements'
 import type { PatternOffset, SkillId, SkillLoadoutEntry, StatusTag, TraitPoints } from './types'
-import {
-  defaultTraitPoints,
-  effectiveSkillRange,
-  shrinkOnePointFromTraits,
-  totalTraitPoints,
-} from './traits'
+import { defaultTraitPoints, shrinkOnePointFromTraits, totalTraitPoints } from './traits'
 import { BOARD_SIZE } from './board'
 
 /** @param boardSize grid width/height (default 7 for tests / editor). */
@@ -20,6 +15,12 @@ export function patternFullyInBounds(
   )
 }
 
+/** Loadout roster grouping in Skill craft: mana spells, stamina melee/ranged physical damage, utilities. */
+export type SkillLoadoutSection = 'magic' | 'physical' | 'utility'
+
+/** Mana vs stamina; also gates silenced / disarmed. */
+export type SkillSchool = 'magic' | 'physical'
+
 export interface SkillDefinition {
   id: SkillId
   name: string
@@ -27,9 +28,12 @@ export interface SkillDefinition {
   range: number
   baseDamage: number
   describePattern: string
-  /** Only cast with anchor on your position; pattern must be a single {0,0} cell. */
-  selfTarget?: boolean
-  /** elemental = normal defenses; physical = fortitude path; none = mend/ward/purge. */
+  school: SkillSchool
+  /** Short fantasy blurb in Skill craft */
+  flavor: string
+  /** Statuses and special outcomes; stack thresholds when the skill gates forms */
+  effectsLine: string
+  /** elemental = normal defenses; physical = fortitude path; none = mend/ward/purge (anchored like offense; min cast distance 0). */
   damageKind?: 'elemental' | 'physical' | 'none'
   /**
    * Extra Chebyshev radius before AoE tiers (max(|dx|,|dy|) from anchor).
@@ -38,7 +42,25 @@ export interface SkillDefinition {
   aoeBase?: number
 }
 
+/** Physical offense: anchor must be exactly 1 Manhattan tile away (orthogonal). */
+export function isAdjacentPhysicalOffense(def: SkillDefinition): boolean {
+  return def.school === 'physical' && def.damageKind === 'physical'
+}
+
 export const SKILL_ROSTER: SkillDefinition[] = [
+  {
+    id: 'strike',
+    name: 'Strike',
+    element: 'physical',
+    range: 1,
+    baseDamage: 2,
+    describePattern: 'Adjacent single cell',
+    school: 'physical',
+    flavor: 'Steel, fist, or spur—whatever you bring, it bites at arm’s length.',
+    effectsLine:
+      'Bleeding on hit (scales with Bleed bonus). Strike Slow, knockback, and lifesteal apply when you invest traits.',
+    damageKind: 'physical',
+  },
   {
     id: 'ember',
     name: 'Ember',
@@ -46,6 +68,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 4,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A mote of forge-heart heat that clings and chars long after the spark is gone.',
+    effectsLine: 'Burning (fire DoT).',
     damageKind: 'elemental',
   },
   {
@@ -55,6 +80,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Needle-ice that steals warmth and patience alike.',
+    effectsLine: 'Chilled; at 2+ stacks, Frozen for one turn instead.',
     damageKind: 'elemental',
   },
   {
@@ -64,6 +92,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 3,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Salt-spray and rising tide—the field grows slick and listening.',
+    effectsLine: 'Soaked.',
     damageKind: 'elemental',
   },
   {
@@ -73,6 +104,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 4,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A snapped ley-line—loud, bright, and impossible to ignore.',
+    effectsLine: 'Shocked (extra flat damage taken from hits, capped).',
     damageKind: 'elemental',
   },
   {
@@ -82,6 +116,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A barbed sting that works inward, not outward.',
+    effectsLine: 'Poisoned (DoT); at 5+ stacks, Regen blocked instead.',
     damageKind: 'elemental',
   },
   {
@@ -91,6 +128,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Wind forged into a razor’s sigh across open air.',
+    effectsLine: 'Chilled.',
     damageKind: 'elemental',
   },
   {
@@ -100,6 +140,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 3,
     baseDamage: 4,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'The ground remembers every footfall—and answers in kind.',
+    effectsLine: 'Chilled; at 2+ stacks, Frozen for one turn; at 4+ stacks, Rooted instead.',
     damageKind: 'elemental',
   },
   {
@@ -109,6 +152,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 5,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Raw syllables without a thesis—still, they find a nerve.',
+    effectsLine: 'Shocked; at 5+ stacks, Silenced instead.',
     damageKind: 'elemental',
   },
   {
@@ -118,6 +164,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 4,
     baseDamage: 4,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Entropy threaded like a needle—what it sews does not close.',
+    effectsLine: 'Poisoned (stronger DoT than Venom Dart).',
     damageKind: 'elemental',
   },
   {
@@ -126,8 +175,10 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     element: 'water',
     range: 0,
     baseDamage: 0,
-    describePattern: 'Self only',
-    selfTarget: true,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Tides of vitality poured back into torn flesh and frayed nerve.',
+    effectsLine: 'Heals HP per pattern hit (no debuff).',
     damageKind: 'none',
   },
   {
@@ -136,8 +187,10 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     element: 'arcane',
     range: 0,
     baseDamage: 0,
-    describePattern: 'Self only',
-    selfTarget: true,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A lattice of will made briefly solid against the next cruel thing.',
+    effectsLine: 'Shield (absorbs damage; stacks add to existing shield on the target).',
     damageKind: 'none',
   },
   {
@@ -146,17 +199,118 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     element: 'wind',
     range: 0,
     baseDamage: 0,
-    describePattern: 'Self only',
-    selfTarget: true,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A gale that scours curse and taint as if they were dust.',
+    effectsLine: 'Removes debuff instances per pattern hit (cleanse).',
+    damageKind: 'none',
+  },
+  {
+    id: 'focus',
+    name: 'Focus',
+    element: 'arcane',
+    range: 0,
+    baseDamage: 0,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'One breath held—then the next strike remembers your name.',
+    effectsLine: 'Skill focus: next offensive skill gains bonus flat damage per damage roll (consumed when you cast it).',
+    damageKind: 'none',
+  },
+  {
+    id: 'wardbreak',
+    name: 'Wardbreak',
+    element: 'fire',
+    range: 0,
+    baseDamage: 0,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Heat that unknits barriers instead of bone—precision arsony.',
+    effectsLine: 'Strips shield HP per pattern hit (no status).',
+    damageKind: 'none',
+  },
+  {
+    id: 'immunize',
+    name: 'Immunize',
+    element: 'earth',
+    range: 0,
+    baseDamage: 0,
+    describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'Salt and circle; one ill omen turned aside at the threshold.',
+    effectsLine: 'Immunized charges (each charge blocks one harmful status application).',
+    damageKind: 'none',
+  },
+  {
+    id: 'overclock',
+    name: 'Overclock',
+    element: 'electric',
+    range: 0,
+    baseDamage: 0,
+    describePattern: 'Custom relative to target',
+    school: 'physical',
+    flavor: 'Borrow tomorrow’s spark—pay for it in limbs that won’t quite obey.',
+    effectsLine: 'Restores mana per pattern hit; applies Slowed for a short duration (same on every target hit).',
     damageKind: 'none',
   },
   {
     id: 'splinter',
     name: 'Splinter',
     element: 'physical',
-    range: 4,
-    baseDamage: 4,
-    describePattern: 'Custom relative to target',
+    range: 1,
+    baseDamage: 3,
+    describePattern: 'Adjacent chip; bleed emphasis from stacks',
+    school: 'physical',
+    flavor: 'A cruel nick that keeps weeping when the blade is already gone.',
+    effectsLine: 'Bleeding (physical DoT).',
+    damageKind: 'physical',
+  },
+  {
+    id: 'cleave',
+    name: 'Cleave',
+    element: 'physical',
+    range: 1,
+    baseDamage: 3,
+    describePattern: 'Adjacent line of two cells from anchor',
+    school: 'physical',
+    flavor: 'Iron drawn through two bodies as if they were one cut of meat.',
+    effectsLine: 'Chilled (shorter duration than ice magic).',
+    damageKind: 'physical',
+  },
+  {
+    id: 'shove',
+    name: 'Shove',
+    element: 'physical',
+    range: 1,
+    baseDamage: 2,
+    describePattern: 'Adjacent hit; always pushes target one tile',
+    school: 'physical',
+    flavor: 'Shoulder, shield, or spell—all say the same word: move.',
+    effectsLine: 'Damage; knocks the target back one tile; Slowed.',
+    damageKind: 'physical',
+  },
+  {
+    id: 'hamstring',
+    name: 'Hamstring',
+    element: 'physical',
+    range: 1,
+    baseDamage: 3,
+    describePattern: 'Adjacent; applies slowed from stacks',
+    school: 'physical',
+    flavor: 'Cut the chase short—let them limp through what’s left of the fight.',
+    effectsLine: 'Slowed (duration scales with stacks).',
+    damageKind: 'physical',
+  },
+  {
+    id: 'rend',
+    name: 'Rend',
+    element: 'physical',
+    range: 1,
+    baseDamage: 3,
+    describePattern: 'Adjacent; strong bleeding from stacks',
+    school: 'physical',
+    flavor: 'Teeth and steel agree: open the vein and mean it.',
+    effectsLine: 'Bleeding (strong physical DoT).',
     damageKind: 'physical',
   },
   {
@@ -166,9 +320,19 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     range: 3,
     baseDamage: 3,
     describePattern: 'Custom relative to target',
+    school: 'magic',
+    flavor: 'A cough of green vapor that clings to mail like guilt.',
+    effectsLine: 'Poisoned (DoT); at 3+ stacks, Marked instead.',
     damageKind: 'elemental',
   },
 ]
+
+/** Skill craft sidebar: Magic (elemental), Physical (stamina offense), Utility (no direct cast damage). */
+export function skillLoadoutSection(def: SkillDefinition): SkillLoadoutSection {
+  if (def.damageKind === 'none') return 'utility'
+  if (def.school === 'physical') return 'physical'
+  return 'magic'
+}
 
 const byId = Object.fromEntries(SKILL_ROSTER.map((s) => [s.id, s])) as Record<
   SkillId,
@@ -176,11 +340,10 @@ const byId = Object.fromEntries(SKILL_ROSTER.map((s) => [s.id, s])) as Record<
 >
 
 /** Hard ceiling for skill slots (also caps {@link maxSkillsForLevel}). */
-export const ABSOLUTE_MAX_SKILLS = 5
+export const ABSOLUTE_MAX_SKILLS = 7
 
 /**
  * More skills unlock every few levels; capped at {@link ABSOLUTE_MAX_SKILLS} and roster size.
- * At level 14 → 4 slots; at 17+ → 5.
  */
 export function maxSkillsForLevel(level: number): number {
   const cap = Math.min(ABSOLUTE_MAX_SKILLS, SKILL_ROSTER.length)
@@ -220,27 +383,43 @@ export function maxPurchasableAoeTier(loadoutPointsAvailable: number): number {
   return maxPurchasableRangeTier(loadoutPointsAvailable)
 }
 
-/** Max cast Manhattan distance: base + Arcane reach + per-skill range tiers (non-self only). */
+/**
+ * Minimum Manhattan distance from caster to anchor.
+ * Physical melee offense: exactly adjacent (1). Magic offense: tier 0 ⇒ 1 else 0. Utilities: 0 (self/squad).
+ */
+export function minCastManhattanForLoadout(def: SkillDefinition, entry: SkillLoadoutEntry): number {
+  if (def.damageKind === 'none') return 0
+  if (isAdjacentPhysicalOffense(def)) return 1
+  const tier = Math.max(0, Math.floor(entry.rangeTier ?? 0))
+  return tier === 0 ? 1 : 0
+}
+
+/**
+ * Max Manhattan distance from caster to anchor. Physical melee offense: 1 only (ignores range tier).
+ * Magic: tier + 1 + arcane reach for utilities; tier + 1 for ranged offense.
+ * Physical utility (e.g. Overclock): tier + 1 only (no arcane reach).
+ */
 export function effectiveCastRangeForLoadout(
   def: SkillDefinition,
   entry: SkillLoadoutEntry,
   traits: TraitPoints,
 ): number {
-  const base = effectiveSkillRange(def.range, traits)
-  if (def.selfTarget) return base
+  if (isAdjacentPhysicalOffense(def)) return 1
   const tier = Math.max(0, Math.floor(entry.rangeTier ?? 0))
-  return base + tier
+  if (def.damageKind === 'none') {
+    const arcane = def.school === 'magic' ? Math.floor(traits.arcaneReach / 2) : 0
+    return tier + 1 + arcane
+  }
+  return tier + 1
 }
 
 /** Chebyshev radius: each pattern offset must satisfy max(|dx|,|dy|) ≤ this value. Tier 0 = anchor cell only. */
 export function effectiveAoERadius(def: SkillDefinition, entry: SkillLoadoutEntry): number {
-  if (def.selfTarget) return 0
   const base = def.aoeBase ?? 0
   return base + Math.max(0, Math.floor(entry.aoeTier ?? 0))
 }
 
 export function offsetWithinAoE(o: PatternOffset, def: SkillDefinition, entry: SkillLoadoutEntry): boolean {
-  if (def.selfTarget) return o.dx === 0 && o.dy === 0
   const R = effectiveAoERadius(def, entry)
   return Math.max(Math.abs(o.dx), Math.abs(o.dy)) <= R
 }
@@ -262,31 +441,69 @@ export function basePowerCost(entry: SkillLoadoutEntry): number {
   return entry.pattern.length + entry.statusStacks
 }
 
-/** Loadout points: power + mana-efficiency points + range tier cost + AoE tier cost. */
+/** Loadout points: power + cost-efficiency points + range tier cost + AoE tier cost. */
 export function entryPointCost(entry: SkillLoadoutEntry): number {
   return (
     basePowerCost(entry) +
-    entry.manaDiscount +
+    entry.costDiscount +
     tierPointCost(entry.rangeTier ?? 0) +
     tierPointCost(entry.aoeTier ?? 0)
   )
 }
 
 /**
- * Mana spent when casting; min 1.
- * Base: pattern cells + status stacks, minus mana discount (loadout points).
- * Each Manhattan tile from you to the cast anchor adds +1 mana (farther = costlier).
+ * One pattern cell + one status stack (no discount, no tiers) is the minimum kit and does not count
+ * toward the level cap — selecting a skill starts here; tuning spends budget.
  */
-export function manaCostForCast(entry: SkillLoadoutEntry, manhattanFromCasterToAnchor = 0): number {
-  const raw = basePowerCost(entry) - entry.manaDiscount + manhattanFromCasterToAnchor
+export const BASELINE_SKILL_LOADOUT_POINT_COST = 2
+
+/** Points from this entry that count against level (above {@link BASELINE_SKILL_LOADOUT_POINT_COST}). */
+export function chargeableEntryPointCost(entry: SkillLoadoutEntry): number {
+  return Math.max(0, entryPointCost(entry) - BASELINE_SKILL_LOADOUT_POINT_COST)
+}
+
+/**
+ * Resource (mana or stamina) spent when casting; min 1.
+ * Base: pattern cells + status stacks, minus cost discount.
+ * Each Manhattan tile from you to the cast anchor adds +1.
+ */
+export function castResourceCost(
+  entry: SkillLoadoutEntry,
+  def: SkillDefinition,
+  manhattanFromCasterToAnchor = 0,
+): number {
+  void def
+  const raw = basePowerCost(entry) - entry.costDiscount + manhattanFromCasterToAnchor
   return Math.max(1, raw)
 }
 
-/** Smallest / largest mana this entry can cost in battle for the given max cast range (distance 0 … maxRange). */
-export function manaCostCastRange(entry: SkillLoadoutEntry, maxRange: number): { min: number; max: number } {
-  const min = manaCostForCast(entry, 0)
-  const max = manaCostForCast(entry, Math.max(0, maxRange))
+/** @deprecated Use {@link castResourceCost} with skill definition. */
+export function manaCostForCast(entry: SkillLoadoutEntry, manhattanFromCasterToAnchor = 0): number {
+  const raw = basePowerCost(entry) - entry.costDiscount + manhattanFromCasterToAnchor
+  return Math.max(1, raw)
+}
+
+/**
+ * Smallest / largest cast cost for this entry at the given Manhattan distance band.
+ */
+export function castResourceCostRange(
+  entry: SkillLoadoutEntry,
+  def: SkillDefinition,
+  maxRange: number,
+  minRange = 0,
+): { min: number; max: number } {
+  const min = castResourceCost(entry, def, Math.max(0, minRange))
+  const max = castResourceCost(entry, def, Math.max(0, maxRange))
   return { min, max }
+}
+
+/** @deprecated Prefer {@link castResourceCostRange} with {@link getSkillDef}(entry.skillId). */
+export function manaCostCastRange(
+  entry: SkillLoadoutEntry,
+  maxRange: number,
+  minRange = 0,
+): { min: number; max: number } {
+  return castResourceCostRange(entry, getSkillDef(entry.skillId), maxRange, minRange)
 }
 
 export function cellsForPattern(target: Coord, pattern: PatternOffset[]): Coord[] {
@@ -328,6 +545,37 @@ export function purgeCleanseCount(statusStacks: number): number {
   return Math.max(1, statusStacks)
 }
 
+/** Flat damage added by each Focus stack (× pattern hits) to the next offensive cast. */
+export function focusBonusDamage(statusStacks: number, statusPotency: number): number {
+  const p = Math.max(1, statusStacks)
+  const pot = Math.max(0, statusPotency)
+  return 2 + p + Math.floor(pot / 3)
+}
+
+/** Shield HP stripped per Wardbreak stack (× hits on target). */
+export function wardbreakShredAmount(statusStacks: number, statusPotency: number): number {
+  const p = Math.max(1, statusStacks)
+  const pot = Math.max(0, statusPotency)
+  return 5 + p * 2 + Math.floor(pot / 2)
+}
+
+/** Debuff blocks granted per Immunize stack (× hits). */
+export function immunizeChargesFromStacks(statusStacks: number): number {
+  return Math.max(1, statusStacks)
+}
+
+/** Mana restored per Overclock stack (× hits). */
+export function overclockManaRestore(statusStacks: number, statusPotency: number): number {
+  const p = Math.max(1, statusStacks)
+  const pot = Math.max(0, statusPotency)
+  return 3 + p * 2 + Math.floor(pot / 2)
+}
+
+/** Slow duration after Overclock (not multiplied by pattern hits). */
+export function overclockSlowDuration(statusStacks: number): number {
+  return Math.max(1, Math.floor(statusStacks / 2) + 1)
+}
+
 export function buildStatusForSkill(
   skillId: SkillId,
   statusStacks: number,
@@ -338,6 +586,8 @@ export function buildStatusForSkill(
   const pd = Math.floor(pot / 2)
 
   switch (skillId) {
+    case 'strike':
+      throw new Error('Strike bleed/slow handled in engine.')
     case 'ember':
       return { t: 'burning', duration: 2 + Math.floor(statusStacks / 3) + Math.floor(pot / 4), dot: 2 + p + pd }
     case 'frost_bolt':
@@ -375,8 +625,21 @@ export function buildStatusForSkill(
       return { t: 'shield', amount: wardShieldAmount(p, pot) }
     case 'purge':
       throw new Error('Purge has no status — handled in engine.')
+    case 'focus':
+    case 'wardbreak':
+    case 'immunize':
+    case 'overclock':
+      throw new Error(`${skillId} has no tile/offensive status — handled in engine.`)
     case 'splinter':
-      return { t: 'bleeding', duration: 2 + pd, dot: 1 + Math.floor(p / 2) + pd }
+      return { t: 'bleeding', duration: 2 + p + pd, dot: 2 + Math.floor(p / 2) + pd }
+    case 'cleave':
+      return { t: 'chilled', duration: 1 + Math.floor(p / 3) }
+    case 'shove':
+      return { t: 'slowed', duration: 1 }
+    case 'hamstring':
+      return { t: 'slowed', duration: 2 + p + Math.floor(pot / 4) }
+    case 'rend':
+      return { t: 'bleeding', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 2) }
     case 'caustic_cloud':
       return statusStacks >= 3
         ? { t: 'marked', duration: 2 + Math.floor(p / 2), extra: 2 + Math.min(4, pd) }
@@ -436,11 +699,11 @@ export function countGridToPatternOffsets(grid: number[][]): PatternOffset[] {
 }
 
 export function totalLoadoutPoints(entries: SkillLoadoutEntry[], traits: TraitPoints): number {
-  const skillPts = entries.reduce((s, e) => s + entryPointCost(e), 0)
-  return skillPts + totalTraitPoints(traits)
+  const skillChargeable = entries.reduce((s, e) => s + chargeableEntryPointCost(e), 0)
+  return skillChargeable + totalTraitPoints(traits)
 }
 
-/** Points this skill may spend (pattern + stacks + mana discount) given level, traits, and other skills. */
+/** Max {@link entryPointCost} for this skill given level, traits, and other skills’ chargeable spend. */
 export function maxSkillPointsBudget(
   level: number,
   traits: TraitPoints,
@@ -448,15 +711,15 @@ export function maxSkillPointsBudget(
   skillId: SkillId,
 ): number {
   const traitPts = totalTraitPoints(traits)
-  const others = entries
+  const othersChargeable = entries
     .filter((e) => e.skillId !== skillId)
-    .reduce((s, e) => s + entryPointCost(e), 0)
-  return Math.max(0, level - traitPts - others)
+    .reduce((s, e) => s + chargeableEntryPointCost(e), 0)
+  const pool = level - traitPts - othersChargeable
+  return BASELINE_SKILL_LOADOUT_POINT_COST + Math.max(0, pool)
 }
 
 /**
  * Reduces mana discount, then stacks, then pattern until within maxPoints (or at minimum legal).
- * Self-target skills stay a single (0,0) cell.
  */
 export function clampSkillLoadoutEntry(
   entry: SkillLoadoutEntry,
@@ -467,24 +730,19 @@ export function clampSkillLoadoutEntry(
     skillId: entry.skillId,
     pattern: [...entry.pattern],
     statusStacks: Math.max(1, Math.floor(entry.statusStacks)),
-    manaDiscount: Math.max(0, Math.floor(entry.manaDiscount ?? 0)),
-    rangeTier: def.selfTarget ? 0 : Math.max(0, Math.floor(entry.rangeTier ?? 0)),
-    aoeTier: def.selfTarget ? 0 : Math.max(0, Math.floor(entry.aoeTier ?? 0)),
-  }
-  if (def.selfTarget) {
-    e.pattern = [{ dx: 0, dy: 0 }]
+    costDiscount: Math.max(0, Math.floor(entry.costDiscount ?? 0)),
+    rangeTier: Math.max(0, Math.floor(entry.rangeTier ?? 0)),
+    aoeTier: Math.max(0, Math.floor(entry.aoeTier ?? 0)),
   }
   function normalizeDiscount() {
     const base = basePowerCost(e)
-    e.manaDiscount = Math.min(e.manaDiscount, Math.max(0, base - 1))
+    e.costDiscount = Math.min(e.costDiscount, Math.max(0, base - 1))
   }
   normalizeDiscount()
-  if (!def.selfTarget) {
-    e.pattern = trimPatternToAoE(e.pattern, def, e)
-  }
+  e.pattern = trimPatternToAoE(e.pattern, def, e)
   while (entryPointCost(e) > maxPoints) {
-    if (e.manaDiscount > 0) {
-      e.manaDiscount--
+    if (e.costDiscount > 0) {
+      e.costDiscount--
       normalizeDiscount()
       continue
     }
@@ -493,26 +751,16 @@ export function clampSkillLoadoutEntry(
       normalizeDiscount()
       continue
     }
-    if (!def.selfTarget && (e.rangeTier ?? 0) > 0) {
+    if ((e.rangeTier ?? 0) > 0) {
       e.rangeTier = (e.rangeTier ?? 0) - 1
       normalizeDiscount()
       continue
     }
-    if (!def.selfTarget && (e.aoeTier ?? 0) > 0) {
+    if ((e.aoeTier ?? 0) > 0) {
       e.aoeTier = (e.aoeTier ?? 0) - 1
       e.pattern = trimPatternToAoE(e.pattern, def, e)
       normalizeDiscount()
       continue
-    }
-    if (!def.selfTarget && e.pattern.length > 1) {
-      e.pattern = e.pattern.slice(0, -1)
-      normalizeDiscount()
-      continue
-    }
-    if (def.selfTarget) {
-      e.pattern = [{ dx: 0, dy: 0 }]
-      normalizeDiscount()
-      break
     }
     if (e.pattern.length > 1) {
       e.pattern = e.pattern.slice(0, -1)
@@ -523,15 +771,8 @@ export function clampSkillLoadoutEntry(
   }
   if (e.pattern.length === 0) e.pattern = [{ dx: 0, dy: 0 }]
   if (e.statusStacks < 1) e.statusStacks = 1
-  if (def.selfTarget) {
-    e.pattern = [{ dx: 0, dy: 0 }]
-    e.rangeTier = 0
-    e.aoeTier = 0
-  }
   normalizeDiscount()
-  if (!def.selfTarget) {
-    e.pattern = trimPatternToAoE(e.pattern, def, e)
-  }
+  e.pattern = trimPatternToAoE(e.pattern, def, e)
   return e
 }
 
@@ -549,7 +790,7 @@ export function fitPlayerBudgetToLevel(
     ...e,
     pattern: [...e.pattern],
     statusStacks: e.statusStacks,
-    manaDiscount: e.manaDiscount ?? 0,
+    costDiscount: e.costDiscount ?? 0,
     rangeTier: e.rangeTier ?? 0,
     aoeTier: e.aoeTier ?? 0,
   }))
@@ -590,10 +831,6 @@ function traitFieldNonNegative(t: TraitPoints): string | null {
   return null
 }
 
-function isSingleCellOriginPattern(pattern: PatternOffset[]): boolean {
-  return pattern.length === 1 && pattern[0]!.dx === 0 && pattern[0]!.dy === 0
-}
-
 export function validateLoadout(
   level: number,
   entries: SkillLoadoutEntry[],
@@ -610,28 +847,24 @@ export function validateLoadout(
     if (!def) return 'Unknown skill.'
     if (e.pattern.length === 0) return 'Each skill needs at least one pattern cell.'
     if (e.statusStacks < 1) return 'Status stacks must be at least 1.'
-    if (def.selfTarget && !isSingleCellOriginPattern(e.pattern)) {
-      return 'Self skills must use a single pattern cell at (0,0).'
-    }
-    const discount = e.manaDiscount ?? 0
-    if (discount < 0 || !Number.isInteger(discount)) return 'Mana discount must be a non-negative integer.'
+    const discount = e.costDiscount ?? 0
+    if (discount < 0 || !Number.isInteger(discount)) return 'Cost discount must be a non-negative integer.'
     const rt = e.rangeTier ?? 0
     if (!Number.isInteger(rt) || rt < 0) return 'Range tier must be a non-negative integer.'
     if (rt > 24) return 'Range tier is too high.'
-    if (def.selfTarget && rt !== 0) return 'Self skills cannot use range tiers.'
     const at = e.aoeTier ?? 0
     if (!Number.isInteger(at) || at < 0) return 'AoE tier must be a non-negative integer.'
     if (at > 24) return 'AoE tier is too high.'
-    if (def.selfTarget && at !== 0) return 'Self skills cannot use AoE tiers.'
     const base = basePowerCost(e)
     if (discount > base - 1) {
-      return 'Mana discount is too high (mana cost must stay at least 1).'
+      return 'Cost discount is too high (cast cost must stay at least 1).'
     }
-    if (!def.selfTarget) {
-      for (const o of e.pattern) {
-        if (!offsetWithinAoE(o, def, e)) {
-          return 'Pattern cells must stay within your AoE range from the anchor.'
-        }
+    if (isAdjacentPhysicalOffense(def) && (e.rangeTier ?? 0) > 0) {
+      return 'Adjacent physical skills cannot use cast range tier.'
+    }
+    for (const o of e.pattern) {
+      if (!offsetWithinAoE(o, def, e)) {
+        return 'Pattern cells must stay within your AoE range from the anchor.'
       }
     }
   }
@@ -639,7 +872,7 @@ export function validateLoadout(
   if (traitErr) return traitErr
   const total = totalLoadoutPoints(entries, traits)
   if (total > level) {
-    return `Total spend is ${total} points (skills + traits) but level is ${level}.`
+    return `Budget spend is ${total} points (traits + skill tuning above the free baseline) but level is ${level}.`
   }
   return null
 }

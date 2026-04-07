@@ -4,24 +4,30 @@ import type { ActorId, BattleConfig, Coord, GameState, SkillId } from '../game/t
 import { coordKey, parseKey } from '../game/board'
 import {
   applyAction,
-  canStrike,
   castReachableAnchors,
   createInitialState,
+  hasDisarmed,
   hasFrozen,
+  hasSilenced,
   legalCasts,
   legalMoves,
-  legalStrikeTargets,
   normalizeBattleConfig,
 } from '../game/engine'
 import { isOvertimeLethal, isOvertimeStormPulseRound } from '../game/overtime'
 import type { GameAction } from '../game/engine'
+import { CPU_THINK_TIMEOUT_MS } from '../ai/cpuThinkBudget'
 import { createCpuWorker, requestCpuPick } from '../ai/requestCpuPick'
-import { effectiveCastRangeForLoadout, entryPointCost, getSkillDef, manaCostCastRange } from '../game/skills'
+import {
+  castResourceCostRange,
+  effectiveCastRangeForLoadout,
+  entryPointCost,
+  getSkillDef,
+  minCastManhattanForLoadout,
+} from '../game/skills'
 import { STAMINA_REGEN_PER_TURN } from '../game/traits'
 import { HolographicBattleBoard, type BoardPiece } from './board'
 import {
   castResolveStaggerMap,
-  knockbackMoveFx,
   patternCellsForCast,
   statusPieceClasses,
   type BoardFxState,
@@ -29,17 +35,17 @@ import {
 import { ActorInspectModal } from './battle/ActorInspectModal'
 import { expandBroadcastRows, type BroadcastRow } from './battle/broadcastLog'
 import { formatClassicRow } from './battle/classicLog'
+import { CpuThinkRing } from './battle/cpuThinkRing'
 import { pickCpuThinkingPhrase } from './battle/cpu-thinking'
 import { battleActorLabel, battlePanelLabel, describeBattleCellTooltip } from './battle/cell-tooltip'
 import { GameGuide } from './help/GameGuide'
 import { resolveTeamColorSlotForTeamId } from '../game/match-roster'
 import './battle/battle-surface.css'
 
-type Mode = 'idle' | 'move' | 'cast' | 'strikePick'
+type Mode = 'idle' | 'move' | 'cast'
 
 const MS = {
   move: 300,
-  strike: 240,
   castOff: 420,
   castSelf: 300,
   reject: 200,
@@ -136,6 +142,10 @@ export function BattleScreen({
   /** Broadcast only: play-by-play lines (`voice === 'caster'`). */
   const [logShowCaster, setLogShowCaster] = useState(true)
 
+  /** CPU worker search window — ring clears when `requestCpuPick` settles, not when board FX end. */
+  const [cpuThink, setCpuThink] = useState<{ actorId: ActorId; deadline: number } | null>(null)
+  const [cpuThinkNow, setCpuThinkNow] = useState(0)
+
   const normalizedMatch = useMemo(() => normalizeBattleConfig(config).match, [config])
   const teamSlot = useCallback(
     (teamId: number) => resolveTeamColorSlotForTeamId(teamId, normalizedMatch.teamColorSlotByTeamId),
@@ -213,6 +223,13 @@ export function BattleScreen({
     }
   }, [logMode])
 
+  useEffect(() => {
+    if (!cpuThink) return
+    setCpuThinkNow(Date.now())
+    const id = window.setInterval(() => setCpuThinkNow(Date.now()), 100)
+    return () => window.clearInterval(id)
+  }, [cpuThink])
+
   const gameRef = useRef(game)
   const battleLogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -243,29 +260,27 @@ export function BattleScreen({
     }
   }, [])
 
-  const scheduleKnockback = useCallback(
-    (
-      prev: GameState,
-      next: GameState,
-      attacker: ActorId,
-      defenderId: ActorId,
-      onDone?: () => void,
-    ) => {
-      const kb = knockbackMoveFx(prev, next, attacker, defenderId)
-      if (!kb || kb.kind !== 'move') {
-        onDone?.()
-        return
-      }
-      setBoardFx(kb)
-      setHiddenPieceActor(kb.actor)
-      window.setTimeout(() => {
-        setBoardFx(null)
-        setHiddenPieceActor(null)
-        onDone?.()
-      }, MS.move)
-    },
-    [],
-  )
+  const commitPlayerCast = useCallback((skillId: SkillId, target: Coord) => {
+    const g = gameRef.current
+    const actorId = g.humanActorId
+    const def = getSkillDef(skillId)
+    const action: GameAction = { type: 'cast', skillId, target }
+    const cells = patternCellsForCast(g, actorId, skillId, target)
+    if (!cells) return
+    const stagger = castResolveStaggerMap(cells)
+    setSceneCastElement(def.element)
+    setBoardFx({ kind: 'castOffensive', element: def.element, stagger })
+    window.setTimeout(() => {
+      setGame((prev) => {
+        const r = applyAction(prev, actorId, action)
+        return r.error ? prev : r.state
+      })
+      setBoardFx(null)
+      setSceneCastElement(null)
+      setMode('idle')
+      setCastSkillId(null)
+    }, MS.castOff)
+  }, [])
 
   const runCpuWithFx = useCallback(() => {
     if (cpuLockRef.current) return
@@ -297,12 +312,16 @@ export function BattleScreen({
         cpuWorkerRef.current = cpuWorker
       }
 
+      setCpuThink({ actorId: actor, deadline: Date.now() + CPU_THINK_TIMEOUT_MS })
+
       void requestCpuPick(stateForPick, actor, cpuWorker, {
         onWorkerReplaced: (w) => {
           cpuWorkerRef.current = w
         },
       }).then(
         (action) => {
+          setCpuThink(null)
+
           if (action.type === 'move') {
             const from = stateForPick.actors[actor]!.pos
             const to = action.to
@@ -320,57 +339,11 @@ export function BattleScreen({
             return
           }
 
-          if (action.type === 'strike') {
-            const tid = action.targetId ?? stateForPick.humanActorId
-            setBoardFx({
-              kind: 'strike',
-              attacker: actor,
-              defenderKey: coordKey(stateForPick.actors[tid]!.pos),
-              defenderId: tid,
-            })
-            window.setTimeout(() => {
-              const prev = gameRef.current
-              const r = applyAction(prev, actor, action)
-              if (r.error) {
-                setBoardFx(null)
-                finishCpu()
-                return
-              }
-              setGame(r.state)
-              setBoardFx(null)
-              if (r.state.winner) {
-                finishCpu()
-                return
-              }
-              scheduleKnockback(prev, r.state, actor, tid, finishCpu)
-            }, MS.strike)
-            return
-          }
-
           if (action.type === 'cast') {
             const def = getSkillDef(action.skillId)
             const entry = stateForPick.loadouts[actor]?.find((e) => e.skillId === action.skillId)
             if (!entry) {
               finishCpu()
-              return
-            }
-
-            if (def.selfTarget) {
-              setSceneCastElement(def.element)
-              setBoardFx({
-                kind: 'castSelf',
-                casterKey: coordKey(stateForPick.actors[actor]!.pos),
-                element: def.element,
-              })
-              window.setTimeout(() => {
-                setGame((prev) => {
-                  const r = applyAction(prev, actor, action)
-                  return r.error ? prev : r.state
-                })
-                setBoardFx(null)
-                setSceneCastElement(null)
-                finishCpu()
-              }, MS.castSelf)
               return
             }
 
@@ -403,13 +376,14 @@ export function BattleScreen({
           }
         },
         () => {
+          setCpuThink(null)
           finishCpu()
         },
       )
     }
 
     runAfterThinkingPaint()
-  }, [scheduleKnockback])
+  }, [])
 
   useEffect(() => {
     if (game.winner || game.tie || game.turn === game.humanActorId || cpuLockRef.current) return
@@ -455,12 +429,10 @@ export function BattleScreen({
     return new Set(cells.map(coordKey))
   }, [mode, castSkillId, hoveredKey, highlightCastReach, game])
 
-  const strikePickKeys = useMemo(() => {
-    if (mode !== 'strikePick') return null
-    return new Set(
-      legalStrikeTargets(game, game.humanActorId).map((id) => coordKey(game.actors[id]!.pos)),
-    )
-  }, [mode, game])
+  const legalStrikeCasts = useMemo(
+    () => legalCasts(game, game.humanActorId).filter((c) => c.skillId === 'strike'),
+    [game],
+  )
 
   /** Another living fighter shares your team — same board color as an ally; mark your token and row */
   const humanSharesTeamColor = useMemo(() => {
@@ -500,49 +472,12 @@ export function BattleScreen({
     window.setTimeout(() => setBoardFx(null), MS.reject)
   }
 
-  function fireStrike(targetId: ActorId): void {
-    const g = gameRef.current
-    setBoardFx({
-      kind: 'strike',
-      attacker: game.humanActorId,
-      defenderKey: coordKey(g.actors[targetId]!.pos),
-      defenderId: targetId,
-    })
-    window.setTimeout(() => {
-      const prev = gameRef.current
-      const r = applyAction(prev, game.humanActorId, { type: 'strike', targetId })
-      if (r.error) {
-        setMessage(r.error)
-        setBoardFx(null)
-        return
-      }
-      setGame(r.state)
-      setBoardFx(null)
-      setMode('idle')
-      setCastSkillId(null)
-      if (r.state.winner) return
-      scheduleKnockback(prev, r.state, game.humanActorId, targetId)
-    }, MS.strike)
-  }
-
   function onCellClick(c: Coord): void {
     setPulseKey(coordKey(c))
     setMessage(null)
     if (game.winner || game.tie || game.turn !== game.humanActorId) return
 
     const k = coordKey(c)
-
-    if (mode === 'strikePick') {
-      const targets = legalStrikeTargets(game, game.humanActorId)
-      const hit = targets.find((id) => coordKey(game.actors[id]!.pos) === k)
-      if (!hit) {
-        triggerReject(k)
-        return
-      }
-      fireStrike(hit)
-      setMode('idle')
-      return
-    }
 
     if (mode === 'move') {
       const ok = legalMoves(game, game.humanActorId).some((m) => coordKey(m) === k)
@@ -574,59 +509,20 @@ export function BattleScreen({
         triggerReject(k)
         return
       }
-
-      const def = getSkillDef(castSkillId)
-      const action: GameAction = { type: 'cast', skillId: castSkillId, target: c }
-
-      if (def.selfTarget) {
-        setSceneCastElement(def.element)
-        setBoardFx({
-          kind: 'castSelf',
-          casterKey: coordKey(game.actors[game.humanActorId]!.pos),
-          element: def.element,
-        })
-        window.setTimeout(() => {
-          setGame((prev) => {
-            const r = applyAction(prev, game.humanActorId, action)
-            return r.error ? prev : r.state
-          })
-          setBoardFx(null)
-          setSceneCastElement(null)
-          setMode('idle')
-          setCastSkillId(null)
-        }, MS.castSelf)
-        return
-      }
-
-      const cells = patternCellsForCast(game, game.humanActorId, castSkillId, c)
-      if (!cells) return
-      const stagger = castResolveStaggerMap(cells)
-      setSceneCastElement(def.element)
-      setBoardFx({ kind: 'castOffensive', element: def.element, stagger })
-      window.setTimeout(() => {
-        setGame((prev) => {
-          const r = applyAction(prev, game.humanActorId, action)
-          return r.error ? prev : r.state
-        })
-        setBoardFx(null)
-        setSceneCastElement(null)
-        setMode('idle')
-        setCastSkillId(null)
-      }, MS.castOff)
+      commitPlayerCast(castSkillId, c)
     }
   }
 
   function onStrikePlayer(): void {
     setMessage(null)
     if (game.winner || game.tie || game.turn !== game.humanActorId) return
-    const targets = legalStrikeTargets(game, game.humanActorId)
-    if (targets.length === 0) return
-    if (targets.length === 1) {
-      fireStrike(targets[0]!)
+    if (legalStrikeCasts.length === 0) return
+    if (legalStrikeCasts.length === 1) {
+      commitPlayerCast('strike', legalStrikeCasts[0]!.target)
       return
     }
-    setMode('strikePick')
-    setCastSkillId(null)
+    setMode('cast')
+    setCastSkillId('strike')
   }
 
   function cellClassSuffix(c: Coord): string {
@@ -638,7 +534,6 @@ export function BattleScreen({
       parts.push(`holo-cell--hazard-${element}`)
     }
     if (mode === 'move' && highlightMove.has(k)) parts.push('holo-cell--hint-move')
-    if (mode === 'strikePick' && strikePickKeys?.has(k)) parts.push('holo-cell--hint-cast-legal')
     if (mode === 'cast' && castSkillId) {
       if (highlightCastLegal.has(k)) parts.push('holo-cell--hint-cast-legal')
       else if (highlightCastReach.has(k)) parts.push('holo-cell--hint-cast-reach')
@@ -663,12 +558,10 @@ export function BattleScreen({
   const hint =
     message ??
     (mode === 'move'
-      ? `Orthogonal steps · up to ${game.actors[game.humanActorId]!.moveMaxSteps}.`
-      : mode === 'strikePick'
-        ? 'Click an adjacent hostile to strike.'
-        : mode === 'cast' && castSkillId
-          ? 'Amber outline = valid anchor. Dim = range only.'
-          : 'Select move, strike, or a skill.')
+      ? `Up to ${game.actors[game.humanActorId]!.moveMaxSteps} steps per move (no diagonals).`
+      : mode === 'cast' && castSkillId
+        ? 'Amber outline = valid anchor. Dim = range only.'
+        : 'Select move, Strike, or a skill.')
 
   const railTitle = game.tie
     ? { className: 'battle-surface__title is-end', text: 'TIE' }
@@ -702,7 +595,7 @@ export function BattleScreen({
             contextContent={
               <>
                 <p className="ls-modal__note">
-                  Move orthogonally (stamina costs apply). Strike adjacent hostiles. Cast spends mana; the skill
+                  Move up, down, left, or right (stamina costs apply). Strike adjacent hostiles. Cast spends mana; the skill
                   pattern anchors on the cell you click, and range is measured from your position to that anchor.
                 </p>
                 <p className="ls-modal__note">
@@ -745,6 +638,7 @@ export function BattleScreen({
                   tabIndex={0}
                   className={`bs-actor bs-actor--t${resolveTeamColorSlotForTeamId(game.teamByActor[id] ?? 0, normalizedMatch.teamColorSlotByTeamId)}${you ? ' bs-actor--you' : ''}${!game.winner && !game.tie && game.turn === id ? ' is-active' : ''}`}
                   aria-current={!game.winner && !game.tie && game.turn === id ? 'true' : undefined}
+                  aria-busy={cpuThink?.actorId === id ? true : undefined}
                   aria-label={`Inspect ${label}`}
                   onClick={() => setInspectActorId(id)}
                   onKeyDown={(e) => {
@@ -754,7 +648,16 @@ export function BattleScreen({
                     }
                   }}
                 >
-                  <span className="bs-actor__label">{label}</span>
+                  <div className="bs-actor__label-row">
+                    <span className="bs-actor__label">{label}</span>
+                    {cpuThink?.actorId === id ? (
+                      <CpuThinkRing
+                        deadlineMs={cpuThink.deadline}
+                        nowMs={cpuThinkNow}
+                        label={`${label} deciding`}
+                      />
+                    ) : null}
+                  </div>
                   <BsMeter kind="hp" current={a.hp} max={a.maxHp} />
                   <BsMeter kind="mana" current={a.mana} max={a.maxMana} />
                   <BsMeter kind="stamina" current={a.stamina} max={a.maxStamina} />
@@ -889,10 +792,14 @@ export function BattleScreen({
               </button>
               <button
                 type="button"
-                className={`bs-btn${mode === 'strikePick' ? ' is-on' : ''}`}
-                disabled={game.turn !== game.humanActorId || !!game.winner || game.tie || !canStrike(game, game.humanActorId)}
+                className={`bs-btn${mode === 'cast' && castSkillId === 'strike' ? ' is-on' : ''}`}
+                disabled={
+                  game.turn !== game.humanActorId || !!game.winner || game.tie || legalStrikeCasts.length === 0
+                }
                 title={
-                  canStrike(game, game.humanActorId) ? 'Physical hit + bleeding (no mana)' : 'Adjacent to hostile required'
+                  legalStrikeCasts.length > 0
+                    ? 'Melee Strike (stamina) — pick a valid anchor like other skills'
+                    : 'Add Strike to loadout and stand adjacent to a valid target'
                 }
                 onClick={onStrikePlayer}
               >
@@ -907,7 +814,7 @@ export function BattleScreen({
                   game.tie ||
                   hasFrozen(game.actors[game.humanActorId]!)
                 }
-                title="End your turn without moving, striking, or casting"
+                title="End your turn without moving or using a skill"
                 onClick={() => {
                   setMessage(null)
                   setMode('idle')
@@ -924,11 +831,18 @@ export function BattleScreen({
             <div className="bs-actions__group">
               <span className="bs-actions__label">Skills</span>
               {game.loadouts[game.humanActorId]!.map((e) => {
+                const me = game.actors[game.humanActorId]!
                 const def = getSkillDef(e.skillId)
-                const maxR = effectiveCastRangeForLoadout(def, e, game.actors[game.humanActorId]!.traits)
-                const { min: mMin, max: mMax } = manaCostCastRange(e, def.selfTarget ? 0 : maxR)
-                const canAfford = game.actors[game.humanActorId]!.mana >= mMin
-                const manaStr = mMin === mMax ? `${mMin}` : `${mMin}–${mMax}`
+                const maxR = effectiveCastRangeForLoadout(def, e, me.traits)
+                const minR = minCastManhattanForLoadout(def, e)
+                const { min: mMin, max: mMax } = castResourceCostRange(e, def, maxR, minR)
+                const resShort = def.school === 'physical' ? 'SP' : 'MP'
+                const curRes = def.school === 'physical' ? me.stamina : me.mana
+                const silenced = def.school === 'magic' && hasSilenced(me)
+                const disarmed = def.school === 'physical' && hasDisarmed(me)
+                const blocked = silenced || disarmed
+                const canAfford = !blocked && curRes >= mMin
+                const costStr = mMin === mMax ? `${mMin}` : `${mMin}–${mMax}`
                 return (
                   <button
                     key={e.skillId}
@@ -937,16 +851,20 @@ export function BattleScreen({
                     aria-pressed={mode === 'cast' && castSkillId === e.skillId}
                     disabled={game.turn !== game.humanActorId || !!game.winner || game.tie || !canAfford}
                     title={
-                      !canAfford
-                        ? `Need at least ${mMin} mana`
-                        : `${manaStr} MP · ${entryPointCost(e)} pts`
+                      silenced
+                        ? 'Silenced — magic skills unavailable'
+                        : disarmed
+                          ? 'Disarmed — physical skills unavailable'
+                          : !canAfford
+                            ? `Need at least ${mMin} ${resShort}`
+                            : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
                     }
                     onClick={() => {
                       setMode('cast')
                       setCastSkillId(e.skillId)
                     }}
                   >
-                    {def.name} · {manaStr}
+                    {def.name} · {costStr}
                   </button>
                 )
               })}

@@ -93,21 +93,36 @@ export function allCells(size: number): Coord[] {
   return out
 }
 
-/** Whether `attacker` may damage `target` (strikes, offensive skills, tile entry). Self is always allowed — your skills and hazards can hurt you. Strikes still omit self via `legalStrikeTargets`. */
+/**
+ * Whether `attacker` may damage `target` (strikes, offensive skills, tile hazards).
+ * Always true — any actor may be hit; aim and pattern geometry are the only gates.
+ */
 export function canDamageTarget(
+  _matchMode: MatchMode,
+  _friendlyFire: boolean,
+  _teamByActor: Record<ActorId, number>,
+  _attacker: ActorId,
+  _target: ActorId,
+): boolean {
+  return true
+}
+
+/**
+ * Tactical opponent for AI and log flavor (not targeting legality): FFA = everyone else;
+ * teams = different `teamId`. False for self.
+ */
+export function isOpponentActor(
   matchMode: MatchMode,
-  friendlyFire: boolean,
   teamByActor: Record<ActorId, number>,
   attacker: ActorId,
   target: ActorId,
 ): boolean {
-  if (attacker === target) return true
+  if (attacker === target) return false
   if (matchMode === 'ffa') return true
   const ta = teamByActor[attacker]
   const tb = teamByActor[target]
   if (ta === undefined || tb === undefined) return true
-  if (ta !== tb) return true
-  return friendlyFire
+  return ta !== tb
 }
 
 /**

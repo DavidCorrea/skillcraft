@@ -8,6 +8,7 @@ import {
 import { CPU_THINK_TIMEOUT_MS } from '../ai/cpuThinkBudget'
 import { randomCpuBuild } from '../game/randomCpuBuild'
 import { GameGuide } from './help/GameGuide'
+import { NumberStepper } from './numeric-stepper.tsx'
 import './board/holographic-board.css'
 import './loadout/loadout-surface.css'
 
@@ -198,8 +199,9 @@ export function MatchSetupScreen({
                   teams. CPUs get random loadouts when the battle starts.
                 </p>
                 <p className="ls-modal__note">
-                  Templates apply a preset layout; you can change fighter count or teams afterward. When any team has
-                  more than one fighter, friendly fire applies — skills and Strikes can hit allies.
+                  Templates apply a preset layout; you can change fighter count or teams afterward. Skills, Strikes, and
+                  tile hazards can hit anyone in range or on affected cells — allies and yourself included — so aim and
+                  positioning matter.
                 </p>
                 <p className="ls-modal__note">
                   <strong>CPU difficulty</strong> applies per computer fighter: how they roll random loadouts and traits,
@@ -387,9 +389,8 @@ export function MatchSetupScreen({
 
         {hasNightmareSelected ? (
           <p className="ls-modal__note" role="status">
-            Nightmare uses very deep lookahead — CPU turns can take a long time and stress your machine. Expect up to{' '}
-            {CPU_THINK_TIMEOUT_MS / 1000} seconds per CPU turn (search is capped there; after that, the CPU falls back to
-            a quick move).
+            Nightmare is CPU-heavy; turns can run up to {CPU_THINK_TIMEOUT_MS / 1000}s each, then fall back to a quick
+            move.
           </p>
         ) : null}
 
@@ -477,17 +478,12 @@ export function MatchSetupScreen({
               {overtimeEnabled ? (
                 <label className="ls-field ls-field--overtime-rounds">
                   <span>Rounds until sudden death</span>
-                  <input
-                    className="ls-input"
-                    type="number"
+                  <NumberStepper
+                    variant="field"
                     min={1}
                     max={99}
                     value={roundsUntilOvertime}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      if (!Number.isFinite(v)) return
-                      setRoundsUntilOvertime(Math.max(1, Math.min(99, Math.round(v))))
-                    }}
+                    onValueChange={(v) => setRoundsUntilOvertime(Math.max(1, Math.min(99, Math.round(v))))}
                     aria-label="Full rounds before sudden death begins"
                   />
                 </label>

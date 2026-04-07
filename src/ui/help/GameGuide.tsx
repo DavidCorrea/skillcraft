@@ -35,19 +35,18 @@ export function GameGuide({ contextContent }: { contextContent: ReactNode }) {
                 <span className="ls-modal__lead">Goal &amp; turn.</span> Reduce all enemies to <strong>0 HP</strong>.
                 Resources: <strong>HP</strong>, <strong>mana</strong> (casts, refills each turn),{' '}
                 <strong>stamina</strong> (move and Strike, refills each turn). Actions: <strong>move</strong>{' '}
-                orthogonally, <strong>Strike</strong> adjacent hostiles, <strong>cast</strong> from your loadout, or{' '}
+                (up, down, left, or right), <strong>Strike</strong> adjacent hostiles, <strong>cast</strong> from your loadout, or{' '}
                 <strong>Skip</strong> to end the turn. Order follows the roster.
               </p>
               <p className="ls-modal__note">
-                <span className="ls-modal__lead">Teams &amp; friendly fire.</span> Same team = allies when teams are
-                shared; in FFA everyone is on a different team. If <strong>any team has more than one fighter</strong>,{' '}
-                <strong>friendly fire</strong> is on: skills and Strikes can damage allies. You can also damage yourself
-                with your own skills and residual tiles.
+                <span className="ls-modal__lead">Teams &amp; targeting.</span> Same team = allies when teams are shared;
+                in FFA everyone is on a different team. <strong>Skills, Strikes, and residual tiles</strong> can affect
+                anyone in range or on the affected cells — enemies, allies, and yourself — so mis-aim is punished.
               </p>
               <p className="ls-modal__note">
                 <span className="ls-modal__lead">Casts.</span> <strong>Mana cost</strong> scales with pattern size,
-                status stacks, mana discount, and <strong>distance</strong> to the target anchor (Manhattan; self-target
-                skills add no distance cost). <strong>Duplicate pattern cells</strong> repeat that offset—multiple hits on
+                status stacks, mana discount, and <strong>distance</strong> to the target anchor (tile steps along the
+                grid). <strong>Duplicate pattern cells</strong> repeat that offset—multiple hits on
                 the same cell stack.
               </p>
               <p className="ls-modal__note ls-modal__note--tight">
@@ -80,7 +79,7 @@ export function GameGuide({ contextContent }: { contextContent: ReactNode }) {
             <section className="ls-modal__section" aria-label="All status types">
               <h3 className="ls-modal__h">Statuses</h3>
               <p className="ls-modal__note">
-                <strong>Tenacity</strong> (Core trait) reduces damage taken from each burning, poison, and bleed tick.
+                <strong>Tenacity</strong> (Defense trait) reduces damage taken from each burning, poison, and bleed tick.
                 Most durations tick on the affected fighter&apos;s turn starts unless a status says otherwise (e.g.{' '}
                 frozen).
               </p>

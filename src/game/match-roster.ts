@@ -88,9 +88,8 @@ export function deriveMatchMode(roster: MatchRosterEntry[]): MatchMode {
   return 'ffa'
 }
 
-/** True when any team has 2+ fighters — skills and Strikes can hit allies. Ignored for rosters where every team is solo (duel, FFA). */
-export function coerceFriendlyFire(roster: MatchRosterEntry[]): boolean {
-  if (!rosterHasMultiMemberTeam(roster)) return false
+/** Always true — stored on {@link MatchSettings} for compatibility; targeting is unrestricted in combat. */
+export function coerceFriendlyFire(_roster: MatchRosterEntry[]): boolean {
   return true
 }
 
@@ -473,7 +472,7 @@ export function legacyPresetToMatchSettings(config: BattleConfig, legacy: Legacy
 }
 
 /**
- * Ensures `config.match` is roster-based; coerces friendly fire; validates.
+ * Ensures `config.match` is roster-based; sets `friendlyFire` (always true); validates.
  * Accepts legacy {@link LegacyMatchSettings} or full {@link MatchSettings}.
  */
 export function normalizeBattleConfig(config: BattleConfig): BattleConfig & { match: MatchSettings } {

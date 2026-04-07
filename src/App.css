@@ -887,6 +887,14 @@
   background: var(--bg-deep);
   color: var(--text);
   font-family: var(--font-mono);
+  -moz-appearance: textfield;
+  color-scheme: dark;
+}
+
+.field input[type='number']::-webkit-outer-spin-button,
+.field input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .field input[type='number']:focus {

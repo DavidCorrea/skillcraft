@@ -5,6 +5,7 @@ import {
   entryPointCost,
   getSkillDef,
   manaCostCastRange,
+  minCastManhattanForLoadout,
 } from '../../game/skills'
 import type { Element } from '../../game/elements'
 import type {
@@ -52,6 +53,10 @@ export function formatStatusLine(s: StatusInstance): string {
       return `Muddy — ${t.duration} turn${t.duration === 1 ? '' : 's'}`
     case 'shield':
       return `Shield — ${t.amount} absorb`
+    case 'skillFocus':
+      return `Focus — +${t.bonus} on next spell damage`
+    case 'immunized':
+      return `Immunized — ${t.charges} debuff block${t.charges === 1 ? '' : 's'}`
     default: {
       const _exhaustive: never = t
       return String(_exhaustive)
@@ -59,7 +64,7 @@ export function formatStatusLine(s: StatusInstance): string {
   }
 }
 
-/** Traits grouped like the loadout guide: Core, Melee, Defenses — non-zero first within each zone, then zeros. */
+/** Traits grouped like the loadout guide: Offense, Defense, Utility — non-zero first within each zone, then zeros. */
 export function traitZonesForInspect(traits: TraitPoints): TraitInspectZone[] {
   return traitReferenceZones.map((zone) => {
     const nonZero: TraitInspectRow[] = []
@@ -128,26 +133,26 @@ export type SkillInspectMeta = {
   aoeTier: number
   stacks: number
   loadoutPts: number
-  selfTarget: boolean
 }
 
 export function skillInspectMeta(entry: SkillLoadoutEntry, traits: TraitPoints): SkillInspectMeta {
   const def = getSkillDef(entry.skillId)
   const maxR = effectiveCastRangeForLoadout(def, entry, traits)
-  const { min: mpMin, max: mpMax } = manaCostCastRange(entry, def.selfTarget ? 0 : maxR)
+  const minR = minCastManhattanForLoadout(def, entry)
+  const { min: mpMin, max: mpMax } = manaCostCastRange(entry, maxR, minR)
   const aoeR = effectiveAoERadius(def, entry)
+  const rangeLabel = minR > 0 ? `Cast range ${minR}–${maxR}` : `Cast range ${maxR}`
   return {
     name: def.name,
     element: def.element,
     mpMin,
     mpMax,
-    rangeLabel: def.selfTarget ? 'Self-cast' : `Cast range ${maxR}`,
+    rangeLabel,
     rangeTier: entry.rangeTier ?? 0,
-    aoeLabel: def.selfTarget ? '—' : `AoE radius ${aoeR}`,
+    aoeLabel: `AoE radius ${aoeR}`,
     aoeTier: entry.aoeTier ?? 0,
     stacks: entry.statusStacks,
     loadoutPts: entryPointCost(entry),
-    selfTarget: !!def.selfTarget,
   }
 }
 
@@ -155,14 +160,15 @@ export function skillInspectMeta(entry: SkillLoadoutEntry, traits: TraitPoints):
 export function formatSkillInspectLine(entry: SkillLoadoutEntry, traits: TraitPoints): string {
   const def = getSkillDef(entry.skillId)
   const maxR = effectiveCastRangeForLoadout(def, entry, traits)
-  const { min: mMin, max: mMax } = manaCostCastRange(entry, def.selfTarget ? 0 : maxR)
+  const minR = minCastManhattanForLoadout(def, entry)
+  const { min: mMin, max: mMax } = manaCostCastRange(entry, maxR, minR)
   const manaStr = mMin === mMax ? `${mMin} MP` : `${mMin}–${mMax} MP`
   const tier = entry.rangeTier ?? 0
   const aoeT = entry.aoeTier ?? 0
   const aoeR = effectiveAoERadius(def, entry)
-  const rangeBit = def.selfTarget ? 'self' : `range ${maxR}`
-  const tierBit = def.selfTarget || tier === 0 ? '' : ` · cast+${tier}`
-  const aoeBit = def.selfTarget || aoeT === 0 ? '' : ` · AoE ${aoeR} (+${aoeT})`
+  const rangeBit = minR > 0 ? `range ${minR}–${maxR}` : `range ${maxR}`
+  const tierBit = tier === 0 ? '' : ` · cast+${tier}`
+  const aoeBit = aoeT === 0 ? '' : ` · AoE ${aoeR} (+${aoeT})`
   const patternN = entry.pattern.length
   return `${def.name} (${def.element}) · ${patternN} cell${patternN === 1 ? '' : 's'} · ${entry.statusStacks} stack${entry.statusStacks === 1 ? '' : 's'} · ${manaStr} · ${rangeBit}${tierBit}${aoeBit} · ${entryPointCost(entry)} loadout pts`
 }

@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PatternOffset, SkillId, SkillLoadoutEntry, TraitPoints } from '../game/types'
 import type { MatchDraft } from './MatchSetupScreen'
+import type { SkillDefinition } from '../game/skills'
 import {
+  BASELINE_SKILL_LOADOUT_POINT_COST,
   basePowerCost,
+  castResourceCostRange,
+  chargeableEntryPointCost,
   clampSkillLoadoutEntry,
-  effectiveAoERadius,
   effectiveCastRangeForLoadout,
   entryPointCost,
   fitPlayerBudgetToLevel,
@@ -12,9 +15,11 @@ import {
   maxPurchasableAoeTier,
   maxPurchasableRangeTier,
   maxSkillPointsBudget,
+  minCastManhattanForLoadout,
   tierPointCost,
   maxSkillsForLevel,
   SKILL_ROSTER,
+  skillLoadoutSection,
   totalLoadoutPoints,
   validateLoadout,
 } from '../game/skills'
@@ -33,6 +38,8 @@ import { formatPresetLabel, PRESET_PLAYER_BUILDS, type PresetPlayerBuild } from 
 import { traitDisplayByKey, traitReferenceZones } from '../game/trait-reference'
 import { GameGuide } from './help/GameGuide'
 import { SkillLoadoutGrid } from './SkillLoadoutGrid'
+import { NumberStepper } from './numeric-stepper.tsx'
+import { TraitDerivedStatsPanel } from './loadout/TraitDerivedStatsPanel'
 import './loadout/loadout-surface.css'
 
 const STORAGE_KEY = 'skillcraft-loadout-v6'
@@ -40,16 +47,92 @@ const LEGACY_STORAGE_KEY = 'skillcraft-loadout-v4'
 
 const MAX_LEVEL = 99
 
+const LOADOUT_ROSTER_SECTIONS = [
+  { id: 'magic' as const, label: 'Magic' },
+  { id: 'physical' as const, label: 'Physical' },
+  { id: 'utility' as const, label: 'Utility' },
+]
+
 /** Default skills for a fresh loadout (before localStorage); order matches roster priority for editor focus. */
 function starterSkillIdsForLevel(level: number): string[] {
   const cap = maxSkillsForLevel(level)
   return ['ember', 'frost_bolt', 'tide_touch', 'spark'].slice(0, cap)
 }
 
+function capitalizeLabel(s: string): string {
+  if (!s) return s
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function LoadoutSkillRailDetails({
+  def,
+  entry,
+  reachR,
+}: {
+  def: SkillDefinition
+  entry: SkillLoadoutEntry
+  reachR: number
+}) {
+  const minCastR = minCastManhattanForLoadout(def, entry)
+  const { min: costMin, max: costMax } = castResourceCostRange(entry, def, reachR, minCastR)
+  const resShort = def.school === 'physical' ? 'SP' : 'MP'
+  const costLine =
+    costMin === costMax ? `${costMin} ${resShort}` : `${costMin}–${costMax} ${resShort}`
+  const patternN = entry.pattern.length
+  const loadoutPts = entryPointCost(entry)
+  const vsLevel = chargeableEntryPointCost(entry)
+  const loadoutLine =
+    vsLevel > 0 ? `${loadoutPts} pts (${vsLevel} vs level)` : `${loadoutPts} pts`
+  const discount = entry.costDiscount ?? 0
+  const powerLine =
+    def.baseDamage > 0
+      ? `${def.baseDamage} per hit on enemy (× pattern weight per cell)`
+      : def.damageKind === 'none'
+        ? 'Utility — no direct hit damage'
+        : null
+
+  return (
+    <section className="ls-rail__section" aria-labelledby="ls-rail-details-heading">
+      <p id="ls-rail-details-heading" className="ls-rail__title" role="heading" aria-level={3}>
+        Details
+      </p>
+      <dl className="ls-rail__details">
+        <dt>Loadout cost</dt>
+        <dd>{loadoutLine}</dd>
+        <dt>Cast cost</dt>
+        <dd>
+          {costLine}
+          <span className="ls-rail__details-note"> (by anchor distance)</span>
+        </dd>
+        {powerLine ? (
+          <>
+            <dt>Power</dt>
+            <dd>{powerLine}</dd>
+          </>
+        ) : null}
+        <dt>Pattern</dt>
+        <dd>
+          {patternN} cell{patternN === 1 ? '' : 's'} · {def.describePattern}
+        </dd>
+        <dt>Status stacks</dt>
+        <dd>{entry.statusStacks}</dd>
+        {discount > 0 ? (
+          <>
+            <dt>Cast discount</dt>
+            <dd>
+              −{discount} {resShort} from loadout spend
+            </dd>
+          </>
+        ) : null}
+      </dl>
+    </section>
+  )
+}
+
 type SkillConfig = {
   pattern: PatternOffset[]
   statusStacks: number
-  manaDiscount: number
+  costDiscount: number
   rangeTier?: number
   aoeTier?: number
 }
@@ -73,7 +156,7 @@ function defaultSkillConfig(): SkillConfig {
   return {
     pattern: [{ dx: 0, dy: 0 }],
     statusStacks: 1,
-    manaDiscount: 0,
+    costDiscount: 0,
     rangeTier: 0,
     aoeTier: 0,
   }
@@ -112,36 +195,54 @@ type TraitKey = keyof TraitPoints
 function TraitRail({
   traitKey,
   value,
-  level,
+  max,
   onChange,
-  title,
+  subtitle,
+  onDerivedPreviewEnter,
+  onDerivedPreviewLeave,
 }: {
   traitKey: TraitKey
   value: number
-  /** Slider track uses a fixed scale (0…level) so other rails do not jump when one trait changes. */
-  level: number
+  /** Remaining trait pool allows at most this value for this stat (same rule as `setTraitValue`). */
+  max: number
   onChange: (n: number) => void
-  title: string
+  /** Visible description under the stat name (same copy as the former hover tooltip). */
+  subtitle: string
+  onDerivedPreviewEnter?: () => void
+  onDerivedPreviewLeave?: () => void
 }) {
   const { label, short } = traitDisplayByKey[traitKey]
   const line = `${label} (${short})`
+  const hintId = `ls-trait-hint-${traitKey}`
   return (
-    <div className="ls-trait" title={title}>
-      <span className="ls-trait__short">{line}</span>
-      <input
-        type="range"
-        className="ls-trait__range"
+    <div
+      className="ls-trait"
+      onMouseEnter={onDerivedPreviewEnter}
+      onMouseLeave={onDerivedPreviewLeave}
+      onFocusCapture={onDerivedPreviewEnter}
+      onBlurCapture={onDerivedPreviewLeave}
+    >
+      <div className="ls-trait__label">
+        <span className="ls-trait__short">{line}</span>
+        <span className="ls-trait__hint" id={hintId}>
+          {subtitle}
+        </span>
+      </div>
+      <NumberStepper
+        className="ls-trait__stepper"
+        variant="rail"
         min={0}
-        max={level}
+        max={max}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={`${line}: ${title}`}
+        onValueChange={onChange}
+        aria-label={line}
+        aria-describedby={hintId}
       />
-      <span className="ls-trait__num">{value}</span>
     </div>
   )
 }
 
+/** Visible subtitle under each trait (former tooltip copy). */
 function traitHint(
   key: TraitKey,
   ctx: {
@@ -171,43 +272,43 @@ function traitHint(
   } = ctx
   switch (key) {
     case 'agility':
-      return `+1 step/move (now ${moveMaxSteps})`
+      return `+1 step/Move · now ${moveMaxSteps}`
     case 'intelligence':
-      return `+1 mana/turn at turn start (now +${manaRegenPerTurn})`
+      return `+1 mana/turn start · now +${manaRegenPerTurn}`
     case 'vitality':
-      return `+${HP_PER_VITALITY} max HP each (preview ${previewMaxHp} HP)`
+      return `+${HP_PER_VITALITY} max HP/pt · now ${previewMaxHp}`
     case 'wisdom':
-      return `+${MANA_PER_WISDOM} max mana each beyond level (preview ${previewMaxMana} mana)`
+      return `+${MANA_PER_WISDOM} max mana/pt · now ${previewMaxMana}`
     case 'regeneration':
-      return 'Heal this much HP at the start of each of your turns'
+      return 'HP healed at the start of each of your turns'
     case 'tenacity':
-      return 'Subtract from each DoT tick you take (burn, poison, bleed)'
+      return 'Reduces each burn / poison / bleed tick'
     case 'arcaneReach':
-      return `+1 skill range per 2 pts (skills use +${Math.floor(traits.arcaneReach / 2)} range)`
+      return `+1 range per 2 pts · skills +${Math.floor(traits.arcaneReach / 2)}`
     case 'spellFocus':
-      return '+Damage to elemental skills after defense (per hit)'
+      return '+skill damage vs elemental after their resist (per hit)'
     case 'statusPotency':
-      return 'Stronger DoTs, shock vuln, and durations from your skills'
+      return 'Stronger skill DoTs, shock, and durations'
     case 'strength':
-      return `Base ${previewStrikeBase} physical before tempo/rhythm; ~${previewStrikeWithTempo} with tempo if ≤1 tile moved`
+      return `Strike base ${previewStrikeBase} · ~${previewStrikeWithTempo} w/ tempo (≤1 tile)`
     case 'bleedBonus':
-      return 'Stronger bleeding DoT from strikes'
+      return 'Stronger Strike bleed'
     case 'meleeLifesteal':
-      return 'Heal HP equal to points on each Strike'
+      return 'Heal HP per Strike (1:1)'
     case 'strikeKnockback':
-      return 'If ≥1, Strike pushes the enemy one free tile away'
+      return '≥1: Strike pushes 1 tile if clear'
     case 'strikeSlow':
-      return 'If ≥1, Strike applies slowed (longer with more pts)'
+      return '≥1: Strike applies slow (longer w/ pts)'
     case 'meleeDuelReduction':
-      return 'Flat less damage from adjacent attackers'
+      return 'Less from adjacent attackers'
     case 'fortitude':
-      return 'Less damage from enemy Strikes (after duel reduction)'
+      return 'Less from Strikes & physical skills (after duel)'
     case 'physicalArmor':
-      return 'Extra flat reduction vs Strikes and physical skills (after fortitude)'
+      return 'Less after fortitude (Strike & physical skills)'
     case 'strikeTempo':
-      return `+Damage per pt if you moved ≤1 tile this turn (~${previewStrikeWithTempo})`
+      return `≤1 tile moved · ~${previewStrikeWithTempo} Strike`
     case 'strikeRhythm':
-      return `Bonus on 2nd, 4th… consecutive Strike (preview 2nd chain: ${previewStrikeRhythm2})`
+      return `2nd-hit Strike ${previewStrikeRhythm2} · also 4th, 6th…`
     case 'defenseFire':
     case 'defenseIce':
     case 'defenseWater':
@@ -216,7 +317,7 @@ function traitHint(
     case 'defenseWind':
     case 'defenseEarth':
     case 'defenseArcane':
-      return 'Per-element reduction vs skills (not Strikes)'
+      return 'Less matching skill damage; not Strikes (min 1)'
     default:
       return `${String(key)} · 0–${maxTraitPool}`
   }
@@ -247,7 +348,7 @@ export function LoadoutScreen({
           ? {
               ...defaultSkillConfig(),
               ...c,
-              manaDiscount: c.manaDiscount ?? 0,
+              costDiscount: c.costDiscount ?? 0,
               rangeTier: c.rangeTier ?? 0,
               aoeTier: c.aoeTier ?? 0,
             }
@@ -268,6 +369,34 @@ export function LoadoutScreen({
   const [presetMenuOpen, setPresetMenuOpen] = useState(false)
   const presetComboRef = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState<'traits' | 'skills'>('traits')
+  const [traitDerivedHoverKey, setTraitDerivedHoverKey] = useState<TraitKey | null>(null)
+  const traitDerivedHoverLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const onTraitDerivedPreviewEnter = (k: TraitKey) => {
+    if (traitDerivedHoverLeaveTimerRef.current !== null) {
+      window.clearTimeout(traitDerivedHoverLeaveTimerRef.current)
+      traitDerivedHoverLeaveTimerRef.current = null
+    }
+    setTraitDerivedHoverKey(k)
+  }
+
+  const onTraitDerivedPreviewLeave = () => {
+    if (traitDerivedHoverLeaveTimerRef.current !== null) {
+      window.clearTimeout(traitDerivedHoverLeaveTimerRef.current)
+    }
+    traitDerivedHoverLeaveTimerRef.current = window.setTimeout(() => {
+      setTraitDerivedHoverKey(null)
+      traitDerivedHoverLeaveTimerRef.current = null
+    }, 50)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (traitDerivedHoverLeaveTimerRef.current !== null) {
+        window.clearTimeout(traitDerivedHoverLeaveTimerRef.current)
+      }
+    }
+  }, [])
 
   const presetTriggerLabel = useMemo(() => {
     if (presetSelection === 'custom') return 'Custom (current)'
@@ -318,7 +447,7 @@ export function LoadoutScreen({
         skillId: s.id,
         pattern: c.pattern,
         statusStacks: c.statusStacks,
-        manaDiscount: c.manaDiscount ?? 0,
+        costDiscount: c.costDiscount ?? 0,
         rangeTier: c.rangeTier ?? 0,
         aoeTier: c.aoeTier ?? 0,
       }
@@ -330,7 +459,7 @@ export function LoadoutScreen({
       nc[e.skillId] = {
         pattern: e.pattern,
         statusStacks: e.statusStacks,
-        manaDiscount: e.manaDiscount,
+        costDiscount: e.costDiscount,
         rangeTier: e.rangeTier ?? 0,
         aoeTier: e.aoeTier ?? 0,
       }
@@ -354,7 +483,7 @@ export function LoadoutScreen({
       skillId: s.id,
       pattern: c.pattern,
       statusStacks: c.statusStacks,
-      manaDiscount: c.manaDiscount ?? 0,
+      costDiscount: c.costDiscount ?? 0,
       rangeTier: c.rangeTier ?? 0,
       aoeTier: c.aoeTier ?? 0,
     }
@@ -390,7 +519,7 @@ export function LoadoutScreen({
           skillId: activeSkill.id,
           pattern: activeCfg.pattern,
           statusStacks: activeCfg.statusStacks,
-          manaDiscount: activeCfg.manaDiscount ?? 0,
+          costDiscount: activeCfg.costDiscount ?? 0,
           rangeTier: activeCfg.rangeTier ?? 0,
           aoeTier: activeCfg.aoeTier ?? 0,
         }
@@ -399,8 +528,6 @@ export function LoadoutScreen({
     activeSkill && activeEntry
       ? effectiveCastRangeForLoadout(getSkillDef(activeSkill.id), activeEntry, traits)
       : 0
-  const activeAoeR =
-    activeSkill && activeEntry ? effectiveAoERadius(getSkillDef(activeSkill.id), activeEntry) : 0
   const activeSkillBudget =
     activeSkill && activeEntry
       ? maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId)
@@ -421,28 +548,28 @@ export function LoadoutScreen({
           1,
           Math.min(
             level,
-            activeSkillBudget - activeCfg.pattern.length - (activeCfg.manaDiscount ?? 0),
+            activeSkillBudget - activeCfg.pattern.length - (activeCfg.costDiscount ?? 0),
           ),
         )
       : 1
   const activeMaxRangeTier =
-    activeSkill && activeCfg && !getSkillDef(activeSkill.id).selfTarget
+    activeSkill && activeCfg
       ? maxPurchasableRangeTier(
           activeSkillBudget -
             activeCfg.pattern.length -
             activeCfg.statusStacks -
-            (activeCfg.manaDiscount ?? 0) -
+            (activeCfg.costDiscount ?? 0) -
             tierPointCost(activeCfg.aoeTier ?? 0),
         )
       : 0
 
   const activeMaxAoeTier =
-    activeSkill && activeCfg && !getSkillDef(activeSkill.id).selfTarget
+    activeSkill && activeCfg
       ? maxPurchasableAoeTier(
           activeSkillBudget -
             activeCfg.pattern.length -
             activeCfg.statusStacks -
-            (activeCfg.manaDiscount ?? 0) -
+            (activeCfg.costDiscount ?? 0) -
             tierPointCost(activeCfg.rangeTier ?? 0),
         )
       : 0
@@ -474,7 +601,7 @@ export function LoadoutScreen({
     ],
   )
 
-  function setTraitFromSlider<K extends keyof TraitPoints>(key: K, raw: number): void {
+  function setTraitValue<K extends keyof TraitPoints>(key: K, raw: number): void {
     markLoadoutCustom()
     setTraits((t) => {
       const cap = level - skillPts - totalTraitPoints(t) + t[key]
@@ -498,7 +625,7 @@ export function LoadoutScreen({
               skillId: s.id,
               pattern: c.pattern,
               statusStacks: c.statusStacks,
-              manaDiscount: c.manaDiscount ?? 0,
+              costDiscount: c.costDiscount ?? 0,
               rangeTier: c.rangeTier ?? 0,
               aoeTier: c.aoeTier ?? 0,
             }
@@ -511,7 +638,7 @@ export function LoadoutScreen({
             skillId: id as SkillId,
             pattern: defaultSkillConfig().pattern,
             statusStacks: defaultSkillConfig().statusStacks,
-            manaDiscount: 0,
+            costDiscount: 0,
             rangeTier: 0,
             aoeTier: 0,
           },
@@ -525,7 +652,7 @@ export function LoadoutScreen({
           [id]: {
             pattern: starter.pattern,
             statusStacks: starter.statusStacks,
-            manaDiscount: starter.manaDiscount,
+            costDiscount: starter.costDiscount,
             rangeTier: starter.rangeTier ?? 0,
             aoeTier: starter.aoeTier ?? 0,
           },
@@ -548,7 +675,7 @@ export function LoadoutScreen({
             skillId: s.id,
             pattern: c.pattern,
             statusStacks: c.statusStacks,
-            manaDiscount: c.manaDiscount ?? 0,
+            costDiscount: c.costDiscount ?? 0,
             rangeTier: c.rangeTier ?? 0,
             aoeTier: c.aoeTier ?? 0,
           }
@@ -559,7 +686,7 @@ export function LoadoutScreen({
         skillId: id as SkillId,
         pattern: cur.pattern,
         statusStacks: cur.statusStacks,
-        manaDiscount: cur.manaDiscount ?? 0,
+        costDiscount: cur.costDiscount ?? 0,
         rangeTier: cur.rangeTier ?? 0,
         aoeTier: cur.aoeTier ?? 0,
       }
@@ -569,7 +696,7 @@ export function LoadoutScreen({
         [id]: {
           pattern: clamped.pattern,
           statusStacks: clamped.statusStacks,
-          manaDiscount: clamped.manaDiscount,
+          costDiscount: clamped.costDiscount,
           rangeTier: clamped.rangeTier ?? 0,
           aoeTier: clamped.aoeTier ?? 0,
         },
@@ -599,7 +726,7 @@ export function LoadoutScreen({
           ? {
               pattern: e.pattern,
               statusStacks: e.statusStacks,
-              manaDiscount: e.manaDiscount ?? 0,
+              costDiscount: e.costDiscount ?? 0,
               rangeTier: e.rangeTier ?? 0,
               aoeTier: e.aoeTier ?? 0,
             }
@@ -623,7 +750,7 @@ export function LoadoutScreen({
           ? {
               pattern: e.pattern,
               statusStacks: e.statusStacks,
-              manaDiscount: e.manaDiscount ?? 0,
+              costDiscount: e.costDiscount ?? 0,
               rangeTier: e.rangeTier ?? 0,
               aoeTier: e.aoeTier ?? 0,
             }
@@ -683,14 +810,12 @@ export function LoadoutScreen({
         <div className="ls-budget" aria-label="Level and budget">
           <label className="ls-level">
             <span>LV</span>
-            <input
-              type="number"
+            <NumberStepper
+              variant="level"
               min={1}
               max={MAX_LEVEL}
               value={level}
-              onChange={(e) => {
-                const n = Number(e.target.value)
-                if (Number.isNaN(n)) return
+              onValueChange={(n) => {
                 markLoadoutCustom()
                 setLevel(Math.min(MAX_LEVEL, Math.max(1, Math.floor(n))))
               }}
@@ -822,8 +947,8 @@ export function LoadoutScreen({
                 (traits) vs sk (skills).
               </li>
               <li>
-                <strong>Trait sliders.</strong> Each step costs 1 point. Sliders cannot exceed what your budget allows.
-                Hover a trait for live previews (movement, regen, Strike numbers, and more).
+                <strong>Trait steppers.</strong> Each point costs 1 level budget. Subtitles under each row and the battle
+                numbers panel below the grid show live values and what each trait changes.
               </li>
               <li>
                 <strong>Skill slots.</strong> You can equip up to {maxSkillSlots} skills at this level. Adding a skill
@@ -853,69 +978,110 @@ export function LoadoutScreen({
 
       <div className="ls-body">
         {phase === 'traits' ? (
-          <div className="ls-traits">
-            {traitReferenceZones.map((zone) => (
-              <section key={zone.title} className="ls-zone" aria-label={zone.title}>
-                <h3 className="ls-zone__title">{zone.title}</h3>
-                {zone.title === 'Core' ? (
-                  <p className="ls-zone__preview">
-                    Move {moveMaxSteps} · MP/turn +{manaRegenPerTurn} · HP {previewMaxHp} · Mana {previewMaxMana}
-                  </p>
-                ) : null}
-                {zone.title === 'Melee' ? (
-                  <p className="ls-zone__preview">
-                    Strike base {previewStrikeBase} · tempo ~{previewStrikeWithTempo} · rhythm-2 {previewStrikeRhythm2}
-                  </p>
-                ) : null}
-                <div className="ls-zone__grid">
-                  {zone.traits.map((t) => (
-                    <TraitRail
-                      key={t.key}
-                      traitKey={t.key}
-                      value={traits[t.key]}
-                      level={level}
-                      onChange={(n) => setTraitFromSlider(t.key, n)}
-                      title={traitHint(t.key, hintCtx)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+          <div className="ls-traits-phase">
+            <div className="ls-traits">
+              {traitReferenceZones.map((zone) => (
+                <section key={zone.title} className="ls-zone" aria-label={zone.title}>
+                  <h3 className="ls-zone__title">{zone.title}</h3>
+                  <div className="ls-zone__grid">
+                    {zone.traits.map((t) => {
+                      const traitMax = Math.max(0, level - skillPts - totalTraitPoints(traits) + traits[t.key])
+                      return (
+                        <TraitRail
+                          key={t.key}
+                          traitKey={t.key}
+                          value={traits[t.key]}
+                          max={traitMax}
+                          onChange={(n) => setTraitValue(t.key, n)}
+                          subtitle={traitHint(t.key, hintCtx)}
+                          onDerivedPreviewEnter={() => onTraitDerivedPreviewEnter(t.key)}
+                          onDerivedPreviewLeave={onTraitDerivedPreviewLeave}
+                        />
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+            <div className="ls-traits-dock" aria-label="Build summary">
+              <TraitDerivedStatsPanel
+                traits={traits}
+                level={level}
+                hoverBumpTraitKey={traitDerivedHoverKey}
+              />
+            </div>
           </div>
         ) : (
           <div className="ls-skills">
             <aside className="ls-roster" aria-label="Skills">
-              <p className="ls-roster__label">Loadout</p>
+              <p className="ls-roster__label">
+                Loadout ({selected.size}/{maxSkillSlots})
+              </p>
               <ul className="ls-roster__list">
-                {SKILL_ROSTER.map((s) => {
-                  const on = selected.has(s.id)
-                  const isActive = resolvedSkillId === s.id
-                  const addBudget = maxSkillPointsBudget(level, traits, entries, s.id as SkillId)
-                  const canAddNew = selected.size < maxSkillSlots && addBudget >= 2
+                {LOADOUT_ROSTER_SECTIONS.map(({ id: sectionId, label: sectionLabel }) => {
+                  const skillsInSection = SKILL_ROSTER.filter((s) => skillLoadoutSection(s) === sectionId)
+                  if (skillsInSection.length === 0) return null
+                  const headingId = `ls-roster-section-${sectionId}`
                   return (
-                    <li key={s.id}>
-                      <div className="ls-roster__row">
-                        <button
-                          type="button"
-                          className={`ls-roster__toggle${on ? ' is-on' : ''}`}
-                          aria-label={on ? `Remove ${s.name}` : `Add ${s.name}`}
-                          aria-pressed={on}
-                          disabled={!on && !canAddNew}
-                          title={!on && !canAddNew ? 'Not enough level budget for another skill' : undefined}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (!on && !canAddNew) return
-                            toggleSkill(s.id)
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className={`ls-roster__name${isActive ? ' is-active' : ''}`}
-                          onClick={() => setConfigureSkillId(s.id)}
-                        >
-                          {s.name}
-                        </button>
-                      </div>
+                    <li key={sectionId} className="ls-roster__section">
+                      <p className="ls-roster__section-label" id={headingId}>
+                        {sectionLabel}
+                      </p>
+                      <ul className="ls-roster__section-list" aria-labelledby={headingId}>
+                        {skillsInSection.map((s) => {
+                          const on = selected.has(s.id)
+                          const isActive = resolvedSkillId === s.id
+                          const addBudget = maxSkillPointsBudget(level, traits, entries, s.id as SkillId)
+                          const canAddNew =
+                            selected.size < maxSkillSlots && addBudget >= BASELINE_SKILL_LOADOUT_POINT_COST
+                          const addBlocked = !on && !canAddNew
+                          const addBlockTitle =
+                            addBlocked && selected.size >= maxSkillSlots
+                              ? `Loadout full (${maxSkillSlots} skills at this level)`
+                              : addBlocked
+                                ? 'Not enough level budget for another skill'
+                                : undefined
+                          return (
+                            <li key={s.id}>
+                              <div className="ls-roster__row">
+                                <button
+                                  type="button"
+                                  className={`ls-roster__toggle${on ? ' is-on' : ''}`}
+                                  aria-label={on ? `Remove ${s.name}` : `Add ${s.name}`}
+                                  aria-pressed={on}
+                                  disabled={addBlocked}
+                                  title={addBlockTitle}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (addBlocked) return
+                                    toggleSkill(s.id)
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className={`ls-roster__name${isActive ? ' is-active' : ''}`}
+                                  disabled={addBlocked}
+                                  title={addBlockTitle}
+                                  aria-label={
+                                    on
+                                      ? `Edit ${s.name}`
+                                      : addBlockTitle
+                                        ? `${s.name} — ${addBlockTitle}`
+                                        : `Add ${s.name} to loadout`
+                                  }
+                                  onClick={() => {
+                                    if (addBlocked) return
+                                    if (on) setConfigureSkillId(s.id)
+                                    else toggleSkill(s.id)
+                                  }}
+                                >
+                                  {s.name}
+                                </button>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
                     </li>
                   )
                 })}
@@ -928,18 +1094,27 @@ export function LoadoutScreen({
               ) : !selected.has(activeSkill.id) ? (
                 <>
                   <div className="ls-stage__head">
-                    <h2>{activeSkill.name}</h2>
-                    <span className="ls-stage__meta">Not in loadout</span>
+                    <div className="ls-stage__title-line">
+                      <h2>{activeSkill.name}</h2>
+                      <span className="ls-stage__meta">Not in loadout</span>
+                    </div>
+                    <p className="ls-stage__flavor">{activeSkill.flavor}</p>
+                    <p className="ls-stage__effects" role="note">
+                      <span className="ls-stage__effects-label">Effects — </span>
+                      {activeSkill.effectsLine}
+                    </p>
                   </div>
                   <button
                     type="button"
                     className="ls-btn-primary"
                     disabled={
                       selected.size >= maxSkillSlots ||
-                      maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId) < 2
+                      maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId) <
+                        BASELINE_SKILL_LOADOUT_POINT_COST
                     }
                     title={
-                      maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId) < 2
+                      maxSkillPointsBudget(level, traits, entries, activeSkill.id as SkillId) <
+                      BASELINE_SKILL_LOADOUT_POINT_COST
                         ? 'Not enough level budget for this skill'
                         : undefined
                     }
@@ -951,25 +1126,31 @@ export function LoadoutScreen({
               ) : activeCfg && activeSkill ? (
                 <>
                   <div className="ls-stage__head">
-                    <h2>{activeSkill.name}</h2>
-                    <span className="ls-stage__meta">
-                      {activeSkill.element} · {activeEntry ? entryPointCost(activeEntry) : 0} pts · cast r
-                      {activeReachR} · AoE {activeAoeR}
-                    </span>
+                    <div className="ls-stage__title-line">
+                      <h2>{activeSkill.name}</h2>
+                      <span className="ls-stage__meta">
+                        {capitalizeLabel(activeSkill.element)} · {activeEntry ? entryPointCost(activeEntry) : 0} pts
+                      </span>
+                    </div>
+                    <p className="ls-stage__flavor">{activeSkill.flavor}</p>
+                    <p className="ls-stage__effects" role="note">
+                      <span className="ls-stage__effects-label">Effects — </span>
+                      {activeSkill.effectsLine}
+                    </p>
                   </div>
                   <div className="ls-stage__grid">
+                    {/* Key must not include AoE tier — remount resets SkillLoadoutGrid preview anchor. */}
                     <SkillLoadoutGrid
-                      key={`skill-grid-${loadoutGridNonce}-${activeSkill.id}-${boardSizeForLevel(level)}-${activeReachR}-${activeCfg.rangeTier ?? 0}-${activeCfg.aoeTier ?? 0}-${getSkillDef(activeSkill.id).selfTarget ? '1' : '0'}`}
+                      key={`skill-grid-${loadoutGridNonce}-${activeSkill.id}-${boardSizeForLevel(level)}-${activeReachR}-${activeCfg.rangeTier ?? 0}-${activeCfg.aoeTier ?? 0}`}
                       skillId={activeSkill.id}
                       pattern={activeCfg.pattern}
                       onPatternChange={(pattern) => setSkillConfig(activeSkill.id, { pattern })}
                       range={activeSkill.range}
                       effectiveRange={activeReachR}
                       statusStacks={activeCfg.statusStacks}
-                      manaDiscount={activeCfg.manaDiscount ?? 0}
+                      costDiscount={activeCfg.costDiscount ?? 0}
                       rangeTier={activeCfg.rangeTier ?? 0}
                       aoeTier={activeCfg.aoeTier ?? 0}
-                      selfTarget={!!getSkillDef(activeSkill.id).selfTarget}
                       boardSize={boardSizeForLevel(level)}
                       loadoutShuffleNonce={loadoutGridNonce}
                     />
@@ -979,20 +1160,22 @@ export function LoadoutScreen({
             </main>
 
             <aside className="ls-rail" aria-label="Skill parameters">
-              {activeSkill && activeCfg && selected.has(activeSkill.id) ? (
+              {activeSkill && activeCfg && activeEntry && selected.has(activeSkill.id) ? (
                 <>
+                  <LoadoutSkillRailDetails def={activeSkill} entry={activeEntry} reachR={activeReachR} />
+                  <hr className="ls-rail__sep" aria-hidden="true" />
                   <p className="ls-rail__title">Tune</p>
                   <div className="ls-inline">
                     <div className="ls-inline__row">
                       <span>Stacks</span>
-                      <input
-                        type="number"
+                      <NumberStepper
+                        variant="rail"
                         min={1}
                         max={activeMaxStacks}
                         value={activeCfg.statusStacks}
-                        onChange={(e) =>
+                        onValueChange={(n) =>
                           setSkillConfig(activeSkill.id, {
-                            statusStacks: Math.max(1, Math.floor(Number(e.target.value))),
+                            statusStacks: Math.max(1, Math.floor(n)),
                           })
                         }
                         aria-label="Status intensity"
@@ -1000,62 +1183,49 @@ export function LoadoutScreen({
                     </div>
                     <div className="ls-inline__row">
                       <span>Mana disc.</span>
-                      <input
-                        type="number"
+                      <NumberStepper
+                        variant="rail"
                         min={0}
                         max={activeMaxDiscount}
-                        value={activeCfg.manaDiscount ?? 0}
-                        onChange={(e) =>
+                        value={activeCfg.costDiscount ?? 0}
+                        onValueChange={(n) =>
                           setSkillConfig(activeSkill.id, {
-                            manaDiscount: Math.max(
-                              0,
-                              Math.min(activeMaxDiscount, Math.floor(Number(e.target.value))),
-                            ),
+                            costDiscount: Math.max(0, Math.min(activeMaxDiscount, Math.floor(n))),
                           })
                         }
                         aria-label="Mana discount (loadout points to lower battle mana)"
                       />
                     </div>
-                    {!getSkillDef(activeSkill.id).selfTarget ? (
-                      <>
-                        <div className="ls-inline__row">
-                          <span>Cast rng</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={activeMaxRangeTier}
-                            value={activeCfg.rangeTier ?? 0}
-                            onChange={(e) =>
-                              setSkillConfig(activeSkill.id, {
-                                rangeTier: Math.max(
-                                  0,
-                                  Math.min(activeMaxRangeTier, Math.floor(Number(e.target.value))),
-                                ),
-                              })
-                            }
-                            aria-label="Cast range tiers"
-                          />
-                        </div>
-                        <div className="ls-inline__row">
-                          <span>AoE rng</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={activeMaxAoeTier}
-                            value={activeCfg.aoeTier ?? 0}
-                            onChange={(e) =>
-                              setSkillConfig(activeSkill.id, {
-                                aoeTier: Math.max(
-                                  0,
-                                  Math.min(activeMaxAoeTier, Math.floor(Number(e.target.value))),
-                                ),
-                              })
-                            }
-                            aria-label="AoE range tiers"
-                          />
-                        </div>
-                      </>
-                    ) : null}
+                    <div className="ls-inline__row">
+                      <span>Cast rng</span>
+                      <NumberStepper
+                        variant="rail"
+                        min={0}
+                        max={activeMaxRangeTier}
+                        value={activeCfg.rangeTier ?? 0}
+                        onValueChange={(n) =>
+                          setSkillConfig(activeSkill.id, {
+                            rangeTier: Math.max(0, Math.min(activeMaxRangeTier, Math.floor(n))),
+                          })
+                        }
+                        aria-label="Cast range tiers"
+                      />
+                    </div>
+                    <div className="ls-inline__row">
+                      <span>AoE rng</span>
+                      <NumberStepper
+                        variant="rail"
+                        min={0}
+                        max={activeMaxAoeTier}
+                        value={activeCfg.aoeTier ?? 0}
+                        onValueChange={(n) =>
+                          setSkillConfig(activeSkill.id, {
+                            aoeTier: Math.max(0, Math.min(activeMaxAoeTier, Math.floor(n))),
+                          })
+                        }
+                        aria-label="AoE range tiers"
+                      />
+                    </div>
                   </div>
                   <button type="button" className="ls-btn-ghost" onClick={() => resetSkillToBasic(activeSkill.id)}>
                     Reset shape

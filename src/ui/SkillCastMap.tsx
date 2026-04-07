@@ -4,7 +4,7 @@ import type { PatternOffset } from '../game/types'
 
 /**
  * Board view: you (south) and CPU (north) at battle start, plus where you may anchor this skill
- * (Manhattan range from you) and which anchors overlap the CPU with your current pattern.
+ * (cast range from you) and which anchors overlap the CPU with your current pattern.
  * Pass `effectiveRange` when previewing Arcane reach (defaults to `range`).
  */
 export function SkillCastMap({
@@ -63,7 +63,7 @@ export function SkillCastMap({
         })}
       </div>
       <p className="skill-cast-map-legend">
-        <span className="legend-swatch range" aria-hidden /> Manhattan ≤ {r} from you ·{' '}
+        <span className="legend-swatch range" aria-hidden /> Up to {r} tiles from you ·{' '}
         <span className="legend-swatch hits" aria-hidden /> anchor overlaps CPU with this pattern (start
         positions)
       </p>

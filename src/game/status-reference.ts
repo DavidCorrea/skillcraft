@@ -64,7 +64,12 @@ export const statusReference: { id: StatusRefId; label: string; description: str
   {
     id: 'silenced',
     label: 'Silenced',
-    description: 'Cannot cast skills. Disrupt reaction clears silence when shocked.',
+    description: 'Cannot cast magic skills. Disrupt reaction clears silence when shocked.',
+  },
+  {
+    id: 'disarmed',
+    label: 'Disarmed',
+    description: 'Cannot cast physical skills. Ground grip reaction clears disarmed when shocked.',
   },
   {
     id: 'regenBlocked',
@@ -108,6 +113,11 @@ export const reactionReference: { name: string; when: string; outcome: string }[
   { name: 'Caustic', when: 'Shocked + poisoned', outcome: 'Increases shock vuln (capped).' },
   { name: 'Conductive', when: 'Soaked + shocked', outcome: 'Increases shock vuln (capped).' },
   { name: 'Disrupt', when: 'Silenced + shocked', outcome: 'Removes silenced.' },
+  {
+    name: 'Ground grip',
+    when: 'Disarmed + shocked',
+    outcome: 'Removes disarmed.',
+  },
   { name: 'Called shot', when: 'Marked + burning, poisoned, or shocked', outcome: 'Increases mark extra (capped).' },
   { name: 'Necrosis', when: 'Regen blocked + poisoned', outcome: 'Extends poison duration.' },
   { name: 'Tar', when: 'Slowed + burning', outcome: 'Extends burn duration.' },
@@ -135,6 +145,7 @@ export const reactionMessages = {
   caustic: 'Caustic: shock and venom amplify each other.',
   conductive: 'Conductive: soaked target takes a stronger shock.',
   disrupt: 'Disrupt: the shock breaks the silence.',
+  groundGrip: 'Ground grip: the shock wrenches your grip back.',
   calledShot: 'Called shot: the mark deepens.',
   necrosis: 'Necrosis: rot sets deeper.',
   tar: 'Tar: fire clings to slowed steps.',

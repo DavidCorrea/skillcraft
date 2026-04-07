@@ -178,6 +178,15 @@
   margin-bottom: 0;
 }
 
+.bs-actor__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  min-width: 0;
+}
+
 .bs-actor__label {
   display: block;
   font-family: var(--bs-mono);
@@ -186,6 +195,35 @@
   text-transform: uppercase;
   color: var(--actor-accent, var(--bs-muted));
   margin-bottom: 0.35rem;
+}
+
+.bs-actor__label-row .bs-actor__label {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* CPU search budget (matches `CPU_THINK_TIMEOUT_MS`); depletes while worker runs */
+.bs-cpu-think-ring {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bs-cpu-think-ring__svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  display: block;
+}
+
+.bs-cpu-think-ring__track {
+  stroke: var(--actor-accent-dim, rgba(148, 163, 184, 0.35));
+}
+
+.bs-cpu-think-ring__arc {
+  stroke: var(--actor-accent, var(--bs-accent));
+  transition: stroke-dashoffset 0.1s linear;
 }
 
 /* Team tint — matches board `holo-piece--t*` (from `teamByActor`). */

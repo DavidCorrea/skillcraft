@@ -19,6 +19,8 @@ const STATUS_LABEL: Record<StatusInstance['tag']['t'], string> = {
   regenBlocked: 'regen blocked',
   muddy: 'muddy',
   shield: 'shield',
+  skillFocus: 'focus',
+  immunized: 'immunized',
 }
 
 export const battleActorLabel = actorLabelForLog
@@ -29,10 +31,25 @@ export function battlePanelLabel(state: GameState, id: ActorId): string {
   return id === state.humanActorId ? `${base} (You)` : base
 }
 
+/** One label per status kind, in first-seen order; duplicate instances become "label ×n". */
 function formatStatusSummary(statuses: StatusInstance[]): string {
   if (statuses.length === 0) return ''
-  const parts = statuses.map((s) => STATUS_LABEL[s.tag.t])
-  return parts.join(', ')
+  type Kind = StatusInstance['tag']['t']
+  const counts = new Map<Kind, number>()
+  const order: Kind[] = []
+  for (const s of statuses) {
+    const k = s.tag.t
+    const n = counts.get(k) ?? 0
+    counts.set(k, n + 1)
+    if (n === 0) order.push(k)
+  }
+  return order
+    .map((k) => {
+      const n = counts.get(k)!
+      const label = STATUS_LABEL[k]
+      return n > 1 ? `${label} ×${n}` : label
+    })
+    .join(', ')
 }
 
 function actorLine(state: GameState, id: ActorId): string {

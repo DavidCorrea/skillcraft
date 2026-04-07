@@ -9,10 +9,10 @@ describe('simulateDuelCpuVsCpu', () => {
     const cfg = duelBattleConfig({
       level: 8,
       playerLoadout: [
-        { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
-        { skillId: 'frost_bolt', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+        { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
+        { skillId: 'frost_bolt', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
       ],
-      cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 }],
+      cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 }],
       playerTraits: defaultTraitPoints(),
       cpuTraits: defaultTraitPoints(),
     })

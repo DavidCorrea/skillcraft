@@ -29,6 +29,7 @@ import {
   boardSizeForMatch,
   canDamageTarget,
   coordKey,
+  isOpponentActor,
   manhattan,
   orthNeighbors,
   spawnPositionsForActors,
@@ -43,16 +44,23 @@ export {
 } from './overtime'
 import {
   buildStatusForSkill,
+  castResourceCost,
   cellsForPattern,
   countHitsOnEnemy,
   damageForCast,
   effectiveCastRangeForLoadout,
   getSkillDef,
-  manaCostForCast,
+  minCastManhattanForLoadout,
+  focusBonusDamage,
+  immunizeChargesFromStacks,
   mendHealAmount,
+  overclockManaRestore,
+  overclockSlowDuration,
   patternFullyInBounds,
   patternRespectsAoE,
   purgeCleanseCount,
+  wardbreakShredAmount,
+  wardShieldAmount,
 } from './skills'
 import {
   buildBleedingTag,
@@ -66,7 +74,6 @@ import {
   maxStaminaForTraits,
   STAMINA_MOVE_COST_PER_TILE,
   STAMINA_REGEN_PER_TURN,
-  STAMINA_STRIKE_COST,
   totalStrikeDamage,
 } from './traits'
 import { cloneTag, resolveStatusesAfterAdd } from './reactions'
@@ -74,9 +81,7 @@ import { cloneTag, resolveStatusesAfterAdd } from './reactions'
 export type GameAction =
   | { type: 'move'; to: Coord }
   | { type: 'cast'; skillId: SkillId; target: Coord }
-  /** Required when multiple adjacent enemies; optional when exactly one legal target. */
-  | { type: 'strike'; targetId?: ActorId }
-  /** End turn without moving, striking, or casting (e.g. no stamina, rooted, silenced with no affordable casts). */
+  /** End turn without moving or casting (e.g. no stamina, rooted, silenced/disarmed with no affordable casts). */
   | { type: 'skip' }
 
 let statusSeq = 0
@@ -168,7 +173,7 @@ function actorFromTraits(
     moveMaxSteps: 1 + traits.agility,
     manaRegenPerTurn: 1 + traits.intelligence,
     tilesMovedThisTurn: 0,
-    strikeStreak: 0,
+    physicalStreak: 0,
     statuses: [],
   }
 }
@@ -245,6 +250,30 @@ export function createInitialState(config: BattleConfig, options?: CreateInitial
 
 function loadoutEntry(actor: ActorId, skillId: SkillId, state: GameState): SkillLoadoutEntry | undefined {
   return state.loadouts[actor].find((e) => e.skillId === skillId)
+}
+
+function castResourceWord(def: ReturnType<typeof getSkillDef>): 'mana' | 'stamina' {
+  return def.school === 'physical' ? 'stamina' : 'mana'
+}
+
+/** Magic casts reset physical streak; deduct mana or stamina. */
+function payCastResource(actor: ActorState, def: ReturnType<typeof getSkillDef>, cost: number): ActorState {
+  const physicalStreak = def.school === 'magic' ? 0 : actor.physicalStreak
+  if (def.school === 'magic') {
+    return { ...actor, mana: actor.mana - cost, physicalStreak }
+  }
+  return { ...actor, stamina: actor.stamina - cost, physicalStreak }
+}
+
+function bumpPhysicalOffenseStreak(
+  state: GameState,
+  actorId: ActorId,
+  def: ReturnType<typeof getSkillDef>,
+): GameState {
+  const dmgKind = def.damageKind ?? 'elemental'
+  if (def.school !== 'physical' || dmgKind !== 'physical') return state
+  const a = state.actors[actorId]!
+  return withActor(state, actorId, { ...a, physicalStreak: a.physicalStreak + 1 })
 }
 
 function decayImpacts(state: GameState): GameState {
@@ -429,6 +458,11 @@ function decayStatuses(statuses: StatusInstance[]): StatusInstance[] {
         if (duration > 0) out.push({ ...s, tag: { ...t, duration } })
         break
       }
+      case 'disarmed': {
+        const duration = t.duration - 1
+        if (duration > 0) out.push({ ...s, tag: { ...t, duration } })
+        break
+      }
       case 'regenBlocked': {
         const duration = t.duration - 1
         if (duration > 0) out.push({ ...s, tag: { ...t, duration } })
@@ -440,6 +474,10 @@ function decayStatuses(statuses: StatusInstance[]): StatusInstance[] {
         break
       }
       case 'shield':
+        out.push(s)
+        break
+      case 'skillFocus':
+      case 'immunized':
         out.push(s)
         break
     }
@@ -599,7 +637,7 @@ function spellFocusRelievedIds(
     if (id === actor) return false
     const t = state.actors[id]
     if (!t || t.hp <= 0) return false
-    if (!canDamageTarget(state.matchMode, state.friendlyFire, state.teamByActor, actor, id)) return false
+    if (!isOpponentActor(state.matchMode, state.teamByActor, actor, id)) return false
     if (hitIds.has(id)) return false
     if (id === state.humanActorId) return false
     return true
@@ -871,28 +909,6 @@ function processFullRoundBoundary(state: GameState): GameState {
   return finalizeEliminations(s)
 }
 
-/** Physical Strike: duel, fortitude, physical armor (raw damage before this). */
-function applyDamageFromAttacker(
-  state: GameState,
-  targetId: ActorId,
-  attackerId: ActorId,
-  rawAmount: number,
-  opts?: { physicalStrike?: boolean },
-): GameState {
-  const target = state.actors[targetId]
-  const attacker = state.actors[attackerId]
-  let n = rawAmount
-  if (opts?.physicalStrike) {
-    if (manhattan(attacker.pos, target.pos) === 1) {
-      n = Math.max(1, n - target.traits.meleeDuelReduction)
-    }
-    n = Math.max(1, n - target.traits.fortitude - target.traits.physicalArmor)
-  }
-  n += vulnerabilityFlat(target)
-  n = Math.max(1, n)
-  return applyHpLoss(state, targetId, n)
-}
-
 function effectiveMoveSteps(actor: ActorState): number {
   const slowed = actor.statuses.some((s) => s.tag.t === 'slowed')
   const muddy = actor.statuses.some((s) => s.tag.t === 'muddy')
@@ -902,13 +918,16 @@ function effectiveMoveSteps(actor: ActorState): number {
   return Math.max(1, actor.moveMaxSteps - pen)
 }
 
-function applyKnockbackFromStrike(
+function applyKnockbackFromAttacker(
   state: GameState,
   strikerId: ActorId,
   enemyId: ActorId,
+  requireStrikeTrait: boolean,
 ): { state: GameState; hazardEntries: BattleLogEntry[]; knockedBack: boolean } {
   const striker = state.actors[strikerId]
-  if (striker.traits.strikeKnockback < 1) return { state, hazardEntries: [], knockedBack: false }
+  if (requireStrikeTrait && striker.traits.strikeKnockback < 1) {
+    return { state, hazardEntries: [], knockedBack: false }
+  }
   const enemy = state.actors[enemyId]
   if (enemy.hp <= 0) return { state, hazardEntries: [], knockedBack: false }
   const dx = Math.sign(enemy.pos.x - striker.pos.x)
@@ -927,8 +946,15 @@ function addStatusToTarget(
   state: GameState,
   targetId: ActorId,
   tag: StatusTag,
+  opts?: { bypassImmunize?: boolean },
 ): { state: GameState; messages: StatusReactionMessage[] } {
   const target = state.actors[targetId]
+  if (!opts?.bypassImmunize) {
+    const imm = tryConsumeImmunize(target, tag)
+    if (imm.blocked) {
+      return { state: withActor(state, targetId, imm.actor), messages: [] }
+    }
+  }
   const incoming: StatusInstance = { id: nextStatusId(), tag: cloneTag(tag) }
   const { statuses, messages, immediateDamage } = resolveStatusesAfterAdd(
     target.statuses,
@@ -946,7 +972,64 @@ function addStatusToTarget(
 }
 
 function isDebuffStatus(s: StatusInstance): boolean {
-  return s.tag.t !== 'shield'
+  const t = s.tag.t
+  return t !== 'shield' && t !== 'skillFocus' && t !== 'immunized'
+}
+
+function incomingBlockedByImmunize(tag: StatusTag): boolean {
+  switch (tag.t) {
+    case 'shield':
+    case 'skillFocus':
+    case 'immunized':
+      return false
+    default:
+      return true
+  }
+}
+
+function tryConsumeImmunize(actor: ActorState, tag: StatusTag): { actor: ActorState; blocked: boolean } {
+  if (!incomingBlockedByImmunize(tag)) return { actor, blocked: false }
+  const idx = actor.statuses.findIndex((s) => s.tag.t === 'immunized')
+  if (idx === -1) return { actor, blocked: false }
+  const inst = actor.statuses[idx]!
+  if (inst.tag.t !== 'immunized') return { actor, blocked: false }
+  const ch = inst.tag.charges
+  const next = [...actor.statuses]
+  if (ch <= 1) {
+    next.splice(idx, 1)
+  } else {
+    next[idx] = { ...inst, tag: { t: 'immunized', charges: ch - 1 } }
+  }
+  return { actor: { ...actor, statuses: next }, blocked: true }
+}
+
+function stripSkillFocusFromCaster(actor: ActorState): { actor: ActorState; bonus: number } {
+  let bonus = 0
+  const statuses = actor.statuses.filter((s) => {
+    if (s.tag.t === 'skillFocus') {
+      bonus += s.tag.bonus
+      return false
+    }
+    return true
+  })
+  return { actor: { ...actor, statuses }, bonus }
+}
+
+/** Reduce shield absorb; returns shield HP actually removed. */
+function reduceShieldOnActor(actor: ActorState, amount: number): { actor: ActorState; stripped: number } {
+  const shIdx = actor.statuses.findIndex((s) => s.tag.t === 'shield')
+  if (shIdx === -1) return { actor, stripped: 0 }
+  const ex = actor.statuses[shIdx]!
+  if (ex.tag.t !== 'shield') return { actor, stripped: 0 }
+  const prev = ex.tag.amount
+  const stripped = Math.min(prev, Math.max(0, amount))
+  const left = prev - stripped
+  const rest = actor.statuses.filter((_, i) => i !== shIdx)
+  if (left <= 0) return { actor: { ...actor, statuses: rest }, stripped }
+  return {
+    actor: { ...actor, statuses: [...rest, { ...ex, tag: { t: 'shield', amount: left } }] },
+    stripped,
+  }
 }
 
 function purgeDebuffs(actor: ActorState, count: number): ActorState {
@@ -964,24 +1047,12 @@ export function hasSilenced(actor: ActorState): boolean {
   return actor.statuses.some((s) => s.tag.t === 'silenced')
 }
 
-export function hasRooted(actor: ActorState): boolean {
-  return actor.statuses.some((s) => s.tag.t === 'rooted')
+export function hasDisarmed(actor: ActorState): boolean {
+  return actor.statuses.some((s) => s.tag.t === 'disarmed')
 }
 
-export function legalStrikeTargets(state: GameState, actor: ActorId): ActorId[] {
-  if (state.winner || state.tie || state.turn !== actor) return []
-  const me = state.actors[actor]
-  if (hasFrozen(me)) return []
-  if (me.stamina < STAMINA_STRIKE_COST) return []
-  const out: ActorId[] = []
-  for (const id of state.turnOrder) {
-    if (id === actor) continue
-    const t = state.actors[id]
-    if (!t || t.hp <= 0) continue
-    if (!canDamageTarget(state.matchMode, state.friendlyFire, state.teamByActor, actor, id)) continue
-    if (manhattan(me.pos, t.pos) === 1) out.push(id)
-  }
-  return out
+export function hasRooted(actor: ActorState): boolean {
+  return actor.statuses.some((s) => s.tag.t === 'rooted')
 }
 
 export function gatherOffensiveHits(
@@ -1040,7 +1111,7 @@ export function applyAction(
       pos: to,
       stamina: me.stamina - moveCost,
       tilesMovedThisTurn: me.tilesMovedThisTurn + dist,
-      strikeStreak: 0,
+      physicalStreak: 0,
     }
     let next = withActor(state, actor, me)
     const enter = applyImpactsOnEnter(next, actor, to)
@@ -1060,153 +1131,6 @@ export function applyAction(
     return { state: next }
   }
 
-  if (action.type === 'strike') {
-    const snapshotBefore = state
-    if (me.stamina < STAMINA_STRIKE_COST) {
-      return { state, error: 'Not enough stamina to strike.' }
-    }
-    const legal = legalStrikeTargets(state, actor)
-    let enemyId = action.targetId
-    if (enemyId === undefined) {
-      if (legal.length === 0) {
-        return { state, error: 'Strike requires being adjacent to an enemy.' }
-      }
-      if (legal.length !== 1) {
-        return { state, error: 'Must choose a strike target.' }
-      }
-      enemyId = legal[0]!
-    } else if (!legal.includes(enemyId)) {
-      return { state, error: 'Invalid strike target.' }
-    }
-    const relievedIds = legal.filter((id) => id !== enemyId && id !== state.humanActorId)
-    const enemy = state.actors[enemyId]!
-    const rawDmg = totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.strikeStreak)
-    const dmgDealt = Math.max(
-      1,
-      physicalStrikeDamageDealt(rawDmg, enemy.traits) + vulnerabilityFlat(enemy),
-    )
-    me = { ...me, stamina: me.stamina - STAMINA_STRIKE_COST }
-    let next = withActor(state, actor, me)
-    next = applyDamageFromAttacker(next, enemyId, actor, rawDmg, { physicalStrike: true })
-
-    let meAfter = next.actors[actor]
-    const heal = meAfter.traits.meleeLifesteal
-    meAfter = {
-      ...meAfter,
-      hp: Math.min(meAfter.maxHp, meAfter.hp + heal),
-      strikeStreak: meAfter.strikeStreak + 1,
-    }
-    next = withActor(next, actor, meAfter)
-
-    const kb = applyKnockbackFromStrike(next, actor, enemyId)
-    next = kb.state
-
-    const strikerLabel = actorLabelForLog(next, actor)
-    next = afterHpChanges(next)
-    const strikeTargetAfter = next.actors[enemyId]!
-    const strikeDetail = {
-      kind: 'strike' as const,
-      actorId: actor,
-      targetId: enemyId,
-      damage: dmgDealt,
-      targetHpAfter: strikeTargetAfter.hp,
-      targetMaxHp: strikeTargetAfter.maxHp,
-      killed: strikeTargetAfter.hp <= 0,
-    }
-    if (next.winner || next.tie) {
-      const strikeWinEntries: BattleLogEntry[] = [
-        {
-          text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`,
-          subject: actor,
-          detail: strikeDetail,
-        },
-      ]
-      if (kb.knockedBack) {
-        strikeWinEntries.push({
-          text: `${strikerLabel} knocks ${actorLabelForLog(next, enemyId)} back.`,
-          subject: actor,
-          detail: { kind: 'knockback', attackerId: actor, targetId: enemyId },
-        })
-      }
-      strikeWinEntries.push(...kb.hazardEntries)
-      if (relievedIds.length > 0) {
-        strikeWinEntries.push({
-          text: '',
-          classicVisible: false,
-          detail: {
-            kind: 'cpu_situational',
-            flavor: 'relief_not_melee_chosen',
-            attackerId: actor,
-            focusTargetId: enemyId,
-            relievedIds,
-          },
-        })
-      }
-      next = appendLogWithFirstBlood(snapshotBefore, next, strikeWinEntries)
-      return { state: next }
-    }
-
-    const strikerTraits = next.actors[actor].traits
-    const bleedTag = buildBleedingTag(strikerTraits.bleedBonus, strikerTraits.statusPotency)
-    const afterBleed = addStatusToTarget(next, enemyId, bleedTag)
-    next = afterBleed.state
-    let strikeEntries: BattleLogEntry[] = [
-      {
-        text: `${strikerLabel} strikes for ${dmgDealt} physical damage.`,
-        subject: actor,
-        detail: strikeDetail,
-      },
-    ]
-    if (kb.knockedBack) {
-      strikeEntries.push({
-        text: `${strikerLabel} knocks ${actorLabelForLog(next, enemyId)} back.`,
-        subject: actor,
-        detail: { kind: 'knockback', attackerId: actor, targetId: enemyId },
-      })
-    }
-    strikeEntries = [...strikeEntries, ...statusReactionEntries(enemyId, afterBleed.messages)]
-    if (kb.hazardEntries.length > 0) strikeEntries = [...strikeEntries, ...kb.hazardEntries]
-
-    if (strikerTraits.strikeSlow >= 1) {
-      const slowTag = buildSlowTag(strikerTraits.strikeSlow)
-      const afterSlow = addStatusToTarget(next, enemyId, slowTag)
-      next = afterSlow.state
-      strikeEntries = [...strikeEntries, ...statusReactionEntries(enemyId, afterSlow.messages)]
-    }
-
-    if (heal > 0) {
-      strikeEntries.push({
-        text: `${strikerLabel} heals ${heal} from lifesteal.`,
-        subject: actor,
-        detail: { kind: 'lifesteal', actorId: actor, amount: heal },
-      })
-    }
-
-    if (relievedIds.length > 0) {
-      strikeEntries.push({
-        text: '',
-        classicVisible: false,
-        detail: {
-          kind: 'cpu_situational',
-          flavor: 'relief_not_melee_chosen',
-          attackerId: actor,
-          focusTargetId: enemyId,
-          relievedIds,
-        },
-      })
-    }
-
-    next = appendLogWithFirstBlood(snapshotBefore, next, strikeEntries)
-
-    next = afterHpChanges(next)
-    if (next.winner || next.tie) {
-      return { state: next }
-    }
-
-    next = advanceTurn(next, actor)
-    return { state: next }
-  }
-
   if (action.type === 'skip') {
     const label = actorLabelForLog(state, actor)
     let next = appendLog(state, [
@@ -1216,24 +1140,38 @@ export function applyAction(
     return { state: next }
   }
 
-  if (hasSilenced(me)) {
-    return { state, error: 'Silenced — you cannot cast.' }
+  if (action.type !== 'cast') {
+    return { state, error: 'Invalid action.' }
   }
 
   const entry = loadoutEntry(actor, action.skillId, state)
   if (!entry) return { state, error: 'Skill not in loadout.' }
 
   const def = getSkillDef(action.skillId)
+  if (def.school === 'magic' && hasSilenced(me)) {
+    return { state, error: 'Silenced — you cannot cast magic.' }
+  }
+  if (def.school === 'physical' && hasDisarmed(me)) {
+    return { state, error: 'Disarmed — you cannot use physical skills.' }
+  }
+
   const target = action.target
-  const anchorDist = def.selfTarget ? 0 : manhattan(me.pos, target)
-  const manaCost = manaCostForCast(entry, anchorDist)
-  if (me.mana < manaCost) return { state, error: 'Not enough mana.' }
+  const anchorDist = manhattan(me.pos, target)
+  const castCost = castResourceCost(entry, def, anchorDist)
+  const resWord = castResourceWord(def)
+  if (def.school === 'magic' && me.mana < castCost) return { state, error: 'Not enough mana.' }
+  if (def.school === 'physical' && me.stamina < castCost) {
+    return { state, error: 'Not enough stamina.' }
+  }
   const sz = state.size
   if (target.x < 0 || target.x >= sz || target.y < 0 || target.y >= sz) {
     return { state, error: 'Invalid target.' }
   }
   const maxRange = effectiveCastRangeForLoadout(def, entry, me.traits)
-  if (manhattan(me.pos, target) > maxRange) return { state, error: 'Target out of range.' }
+  const minRange = minCastManhattanForLoadout(def, entry)
+  if (anchorDist > maxRange || anchorDist < minRange) {
+    return { state, error: 'Target out of range.' }
+  }
 
   if (!patternFullyInBounds(target, entry.pattern, sz)) {
     return { state, error: 'Pattern would leave the board from this target.' }
@@ -1245,75 +1183,256 @@ export function applyAction(
 
   const dmgKind = def.damageKind ?? 'elemental'
 
-  if (def.selfTarget) {
+  if (dmgKind === 'none') {
     const snapshotBefore = state
-    if (coordKey(target) !== coordKey(me.pos)) {
-      return { state, error: 'Self skills must target your own cell.' }
-    }
-    me = { ...me, mana: me.mana - manaCost, strikeStreak: 0 }
+    me = payCastResource(me, def, castCost)
     let next = withActor(state, actor, me)
     const potency = me.traits.statusPotency
-
     const casterLabel = actorLabelForLog(next, actor)
-    if (action.skillId === 'mend') {
-      const heal = mendHealAmount(entry.statusStacks, potency)
-      const healed = next.actors[actor]
-      const hp = Math.min(healed.maxHp, healed.hp + heal)
-      next = withActor(next, actor, { ...healed, hp })
+    const hitList = gatherOffensiveHits(next, actor, target, entry.pattern)
+    const totalPatternHits = hitList.reduce((s, h) => s + h.hits, 0)
+
+    if (totalPatternHits === 0) {
+      next = layImpacts(next, target, entry, actor, potency)
       next = appendLogWithFirstBlood(snapshotBefore, next, [
         {
-          text: `${casterLabel} casts ${def.name} for +${heal} HP (${manaCost} mana).`,
+          text: `${casterLabel} casts ${def.name} — residual energy lingers on the tiles (${castCost} ${resWord}).`,
           subject: actor,
-          detail: {
-            kind: 'cast_self_heal',
-            skillId: action.skillId,
-            actorId: actor,
-            heal,
-            manaCost,
-          },
+          detail: { kind: 'cast_linger', skillId: action.skillId, actorId: actor, manaCost: castCost },
         },
       ])
-    } else if (action.skillId === 'ward') {
-      const tag = buildStatusForSkill('ward', entry.statusStacks, potency)
-      const cur = next.actors[actor]
-      const shIdx = cur.statuses.findIndex((s) => s.tag.t === 'shield')
-      let finalTag: StatusTag = tag
-      if (tag.t === 'shield' && shIdx !== -1) {
-        const ex = cur.statuses[shIdx]!
-        if (ex.tag.t === 'shield') {
-          finalTag = { t: 'shield', amount: ex.tag.amount + tag.amount }
-        }
+      next = afterHpChanges(next)
+      if (next.winner || next.tie) {
+        return { state: next }
       }
-      const stripped =
-        shIdx !== -1 && finalTag.t === 'shield' ? cur.statuses.filter((_, i) => i !== shIdx) : cur.statuses
-      next = withActor(next, actor, { ...cur, statuses: stripped })
-      const after = addStatusToTarget(next, actor, finalTag)
-      next = after.state
+      next = advanceTurn(next, actor)
+      return { state: next }
+    }
+
+    const skillId = action.skillId
+    if (skillId === 'mend') {
+      let totalHeal = 0
+      const healTargets: { targetId: ActorId; heal: number }[] = []
+      for (const { targetId, hits } of hitList) {
+        const t = next.actors[targetId]!
+        const heal = mendHealAmount(entry.statusStacks, potency) * hits
+        const hp = Math.min(t.maxHp, t.hp + heal)
+        const actual = hp - t.hp
+        totalHeal += actual
+        healTargets.push({ targetId, heal: actual })
+        next = withActor(next, targetId, { ...t, hp })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
       next = appendLogWithFirstBlood(snapshotBefore, next, [
         {
-          text: `${casterLabel} casts ${def.name} (${manaCost} mana).`,
-          subject: actor,
-          detail: { kind: 'cast_self_ward', skillId: action.skillId, actorId: actor, manaCost },
-        },
-        ...statusReactionEntries(actor, after.messages),
-      ])
-    } else if (action.skillId === 'purge') {
-      const n = purgeCleanseCount(entry.statusStacks)
-      const purged = purgeDebuffs(next.actors[actor], n)
-      next = withActor(next, actor, purged)
-      next = appendLogWithFirstBlood(snapshotBefore, next, [
-        {
-          text: `${casterLabel} casts ${def.name}, cleanses ${n} (${manaCost} mana).`,
+          text:
+            healTargets.length === 1
+              ? `${casterLabel} casts ${def.name} for +${healTargets[0]!.heal} HP (${castCost} ${resWord}).`
+              : `${casterLabel} casts ${def.name} for +${totalHeal} HP (${healTargets.length} targets, ${castCost} ${resWord}).`,
           subject: actor,
           detail: {
-            kind: 'cast_self_purge',
-            skillId: action.skillId,
+            kind: 'cast_area_heal',
+            skillId,
             actorId: actor,
-            cleanseCount: n,
-            manaCost,
+            manaCost: castCost,
+            totalHeal,
+            targets: healTargets,
           },
         },
       ])
+    } else if (skillId === 'ward') {
+      const addPerHit = wardShieldAmount(entry.statusStacks, potency)
+      const wardTargets: ActorId[] = []
+      const reactionLogs: BattleLogEntry[] = []
+      for (const { targetId, hits } of hitList) {
+        const addAmt = addPerHit * hits
+        wardTargets.push(targetId)
+        const cur = next.actors[targetId]!
+        const shIdx = cur.statuses.findIndex((s) => s.tag.t === 'shield')
+        let finalTag: StatusTag = { t: 'shield', amount: addAmt }
+        if (shIdx !== -1) {
+          const ex = cur.statuses[shIdx]!
+          if (ex.tag.t === 'shield') {
+            finalTag = { t: 'shield', amount: ex.tag.amount + addAmt }
+          }
+        }
+        const stripped =
+          shIdx !== -1 && finalTag.t === 'shield' ? cur.statuses.filter((_, i) => i !== shIdx) : cur.statuses
+        next = withActor(next, targetId, { ...cur, statuses: stripped })
+        const after = addStatusToTarget(next, targetId, finalTag)
+        next = after.state
+        reactionLogs.push(...statusReactionEntries(targetId, after.messages))
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text: `${casterLabel} casts ${def.name} (${wardTargets.length} target${wardTargets.length === 1 ? '' : 's'}, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_ward',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targetIds: wardTargets,
+          },
+        },
+        ...reactionLogs,
+      ])
+    } else if (skillId === 'purge') {
+      const per = purgeCleanseCount(entry.statusStacks)
+      const purgeTargets: { targetId: ActorId; cleanseCount: number }[] = []
+      for (const { targetId, hits } of hitList) {
+        const n = per * hits
+        const cur = next.actors[targetId]!
+        const purged = purgeDebuffs(cur, n)
+        next = withActor(next, targetId, purged)
+        purgeTargets.push({ targetId, cleanseCount: n })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      const sumN = purgeTargets.reduce((s, x) => s + x.cleanseCount, 0)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text:
+            purgeTargets.length === 1
+              ? `${casterLabel} casts ${def.name}, cleanses ${purgeTargets[0]!.cleanseCount} (${castCost} ${resWord}).`
+              : `${casterLabel} casts ${def.name}, cleanses ${sumN} total (${purgeTargets.length} targets, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_purge',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targets: purgeTargets,
+          },
+        },
+      ])
+    } else if (skillId === 'focus') {
+      const focusTargets: { targetId: ActorId; bonus: number }[] = []
+      const reactionLogs: BattleLogEntry[] = []
+      for (const { targetId, hits } of hitList) {
+        const bonus = focusBonusDamage(entry.statusStacks, potency) * hits
+        const tag: StatusTag = { t: 'skillFocus', bonus }
+        const after = addStatusToTarget(next, targetId, tag)
+        next = after.state
+        reactionLogs.push(...statusReactionEntries(targetId, after.messages))
+        focusTargets.push({ targetId, bonus })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text:
+            focusTargets.length === 1
+              ? `${casterLabel} casts ${def.name} (+${focusTargets[0]!.bonus} next-hit damage, ${castCost} ${resWord}).`
+              : `${casterLabel} casts ${def.name} (${focusTargets.length} targets, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_focus',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targets: focusTargets,
+          },
+        },
+        ...reactionLogs,
+      ])
+    } else if (skillId === 'wardbreak') {
+      const wbTargets: { targetId: ActorId; stripped: number }[] = []
+      for (const { targetId, hits } of hitList) {
+        const strip = wardbreakShredAmount(entry.statusStacks, potency) * hits
+        const cur = next.actors[targetId]!
+        const { actor: na, stripped } = reduceShieldOnActor(cur, strip)
+        next = withActor(next, targetId, na)
+        if (stripped > 0) wbTargets.push({ targetId, stripped })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      const sumStrip = wbTargets.reduce((s, x) => s + x.stripped, 0)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text:
+            wbTargets.length === 0
+              ? `${casterLabel} casts ${def.name} — no shields to shred (${castCost} ${resWord}).`
+              : wbTargets.length === 1
+                ? `${casterLabel} casts ${def.name}, shreds ${wbTargets[0]!.stripped} shield (${castCost} ${resWord}).`
+                : `${casterLabel} casts ${def.name}, shreds ${sumStrip} shield (${wbTargets.length} targets, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_wardbreak',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targets: wbTargets,
+          },
+        },
+      ])
+    } else if (skillId === 'immunize') {
+      const imTargets: { targetId: ActorId; charges: number }[] = []
+      const reactionLogs: BattleLogEntry[] = []
+      for (const { targetId, hits } of hitList) {
+        const ch = immunizeChargesFromStacks(entry.statusStacks) * hits
+        const tag: StatusTag = { t: 'immunized', charges: ch }
+        const after = addStatusToTarget(next, targetId, tag)
+        next = after.state
+        reactionLogs.push(...statusReactionEntries(targetId, after.messages))
+        imTargets.push({ targetId, charges: ch })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text:
+            imTargets.length === 1
+              ? `${casterLabel} casts ${def.name} (${imTargets[0]!.charges} block${imTargets[0]!.charges === 1 ? '' : 's'}, ${castCost} ${resWord}).`
+              : `${casterLabel} casts ${def.name} (${imTargets.length} targets, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_immunize',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targets: imTargets,
+          },
+        },
+        ...reactionLogs,
+      ])
+    } else if (skillId === 'overclock') {
+      const ocTargets: { targetId: ActorId; manaRestored: number; slowTurns: number }[] = []
+      const slowDur = overclockSlowDuration(entry.statusStacks)
+      const reactionLogs: BattleLogEntry[] = []
+      for (const { targetId, hits } of hitList) {
+        const gain = overclockManaRestore(entry.statusStacks, potency) * hits
+        const t = next.actors[targetId]!
+        const mana = Math.min(t.maxMana, t.mana + gain)
+        const actual = mana - t.mana
+        next = withActor(next, targetId, { ...t, mana })
+        const afterSlow = addStatusToTarget(
+          next,
+          targetId,
+          { t: 'slowed', duration: slowDur },
+          { bypassImmunize: true },
+        )
+        next = afterSlow.state
+        reactionLogs.push(...statusReactionEntries(targetId, afterSlow.messages))
+        ocTargets.push({ targetId, manaRestored: actual, slowTurns: slowDur })
+      }
+      next = layImpacts(next, target, entry, actor, potency)
+      next = appendLogWithFirstBlood(snapshotBefore, next, [
+        {
+          text:
+            ocTargets.length === 1
+              ? `${casterLabel} casts ${def.name} (+${ocTargets[0]!.manaRestored} mana, slowed ${slowDur}t, ${castCost} ${resWord}).`
+              : `${casterLabel} casts ${def.name} (${ocTargets.length} targets, ${castCost} ${resWord}).`,
+          subject: actor,
+          detail: {
+            kind: 'cast_area_overclock',
+            skillId,
+            actorId: actor,
+            manaCost: castCost,
+            targets: ocTargets,
+          },
+        },
+        ...reactionLogs,
+      ])
+    } else {
+      return { state, error: 'Unsupported utility cast.' }
     }
 
     next = afterHpChanges(next)
@@ -1328,31 +1447,40 @@ export function applyAction(
   const hitList = gatherOffensiveHits(state, actor, target, entry.pattern)
   const totalHits = hitList.reduce((s, h) => s + h.hits, 0)
 
-  me = { ...me, mana: me.mana - manaCost, strikeStreak: 0 }
+  me = payCastResource(me, def, castCost)
+  const { actor: meStrippedFocus, bonus: skillFocusFlat } = stripSkillFocusFromCaster(me)
+  me = meStrippedFocus
   let next = withActor(state, actor, me)
   const potency = me.traits.statusPotency
 
   if (totalHits === 0) {
-    next = layImpacts(next, target, entry, actor, potency)
+    if (action.skillId !== 'strike') {
+      next = layImpacts(next, target, entry, actor, potency)
+    }
     next = appendLogWithFirstBlood(snapshotOffense, next, [
       {
-        text: `${actorLabelForLog(next, actor)} casts ${def.name} — residual energy lingers on the tiles (${manaCost} mana).`,
+        text: `${actorLabelForLog(next, actor)} casts ${def.name} — residual energy lingers on the tiles (${castCost} ${resWord}).`,
         subject: actor,
-        detail: { kind: 'cast_linger', skillId: action.skillId, actorId: actor, manaCost },
+        detail: { kind: 'cast_linger', skillId: action.skillId, actorId: actor, manaCost: castCost },
       },
     ])
     next = afterHpChanges(next)
     if (next.winner || next.tie) {
       return { state: next }
     }
+    next = bumpPhysicalOffenseStreak(next, actor, def)
     next = advanceTurn(next, actor)
     return { state: next }
   }
 
   let sumDmg = 0
+  const offensiveSkillId = action.skillId
   for (const { targetId, hits } of hitList) {
     const enemy = next.actors[targetId]!
-    const rawDamage = damageForCast(def, hits)
+    const rawDamage =
+      offensiveSkillId === 'strike'
+        ? totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.physicalStreak) * hits
+        : damageForCast(def, hits)
     let dmg = 0
     if (dmgKind === 'elemental') {
       const afterElem = elementalSkillDamageDealt(
@@ -1363,9 +1491,18 @@ export function applyAction(
       )
       dmg = damageWithShock(afterElem, enemy)
       dmg += vulnerabilityFlat(enemy)
-      dmg = Math.max(1, dmg)
+      dmg = Math.max(1, dmg + skillFocusFlat)
       next = applyHpLoss(next, targetId, dmg)
     } else if (dmgKind === 'physical') {
+      if (offensiveSkillId === 'strike') {
+        const afterStrike = physicalStrikeDamageDealt(rawDamage, enemy.traits)
+        dmg = damageWithShock(afterStrike, enemy)
+        dmg += vulnerabilityFlat(enemy)
+        dmg = Math.max(1, dmg + skillFocusFlat)
+        sumDmg += dmg
+        next = applyHpLoss(next, targetId, dmg)
+        continue
+      }
       const afterPhys = physicalSkillDamageDealt(
         rawDamage,
         enemy.traits,
@@ -1373,13 +1510,33 @@ export function applyAction(
       )
       dmg = damageWithShock(afterPhys, enemy)
       dmg += vulnerabilityFlat(enemy)
-      dmg = Math.max(1, dmg)
+      dmg = Math.max(1, dmg + skillFocusFlat)
       next = applyHpLoss(next, targetId, dmg)
     }
     sumDmg += dmg
   }
 
-  next = layImpacts(next, target, entry, actor, potency)
+  if (offensiveSkillId === 'shove') {
+    for (const { targetId } of hitList) {
+      if (
+        !canDamageTarget(
+          next.matchMode,
+          next.friendlyFire,
+          next.teamByActor,
+          actor,
+          targetId,
+        )
+      ) {
+        continue
+      }
+      const kb = applyKnockbackFromAttacker(next, actor, targetId, false)
+      next = kb.state
+    }
+  }
+
+  if (offensiveSkillId !== 'strike') {
+    next = layImpacts(next, target, entry, actor, potency)
+  }
 
   const hitSnapshots = hitList.map(({ targetId }) => {
     const a = next.actors[targetId]!
@@ -1391,14 +1548,14 @@ export function applyAction(
     skillId: action.skillId,
     actorId: actor,
     totalDamage: sumDmg,
-    manaCost,
+    manaCost: castCost,
     targetCount: hitList.length,
     hitSnapshots,
   }
 
   const winCastEntries: BattleLogEntry[] = [
     {
-      text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${manaCost} mana).`,
+      text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${castCost} ${resWord}).`,
       subject: actor,
       detail: castDamageDetail,
     },
@@ -1428,18 +1585,63 @@ export function applyAction(
     return { state: { ...next, winner: winFromCast } }
   }
 
-  const tag = buildStatusForSkill(action.skillId, entry.statusStacks, me.traits.statusPotency)
   let castEntries: BattleLogEntry[] = [
     {
-      text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${manaCost} mana).`,
+      text: `${actorLabelForLog(next, actor)} casts ${def.name} for ${sumDmg} damage (${castCost} ${resWord}).`,
       subject: actor,
       detail: castDamageDetail,
     },
   ]
-  for (const { targetId } of hitList) {
-    const afterStatus = addStatusToTarget(next, targetId, tag)
-    next = afterStatus.state
-    castEntries = [...castEntries, ...statusReactionEntries(targetId, afterStatus.messages)]
+
+  if (offensiveSkillId === 'strike') {
+    const strikerTraits = next.actors[actor]!.traits
+    const casterLabel = actorLabelForLog(next, actor)
+    for (const { targetId } of hitList) {
+      if (
+        !canDamageTarget(next.matchMode, next.friendlyFire, next.teamByActor, actor, targetId)
+      ) {
+        continue
+      }
+      const t = next.actors[targetId]!
+      if (t.hp <= 0) continue
+      const bleedTag = buildBleedingTag(strikerTraits.bleedBonus, strikerTraits.statusPotency)
+      const afterBleed = addStatusToTarget(next, targetId, bleedTag)
+      next = afterBleed.state
+      castEntries = [...castEntries, ...statusReactionEntries(targetId, afterBleed.messages)]
+      if (strikerTraits.strikeSlow >= 1) {
+        const slowTag = buildSlowTag(strikerTraits.strikeSlow)
+        const afterSlow = addStatusToTarget(next, targetId, slowTag)
+        next = afterSlow.state
+        castEntries = [...castEntries, ...statusReactionEntries(targetId, afterSlow.messages)]
+      }
+      const kb = applyKnockbackFromAttacker(next, actor, targetId, true)
+      next = kb.state
+      if (kb.knockedBack) {
+        castEntries.push({
+          text: `${casterLabel} knocks ${actorLabelForLog(next, targetId)} back.`,
+          subject: actor,
+          detail: { kind: 'knockback', attackerId: actor, targetId },
+        })
+      }
+      castEntries.push(...kb.hazardEntries)
+    }
+    const heal = strikerTraits.meleeLifesteal
+    if (heal > 0) {
+      const cur = next.actors[actor]!
+      next = withActor(next, actor, { ...cur, hp: Math.min(cur.maxHp, cur.hp + heal) })
+      castEntries.push({
+        text: `${casterLabel} heals ${heal} from lifesteal.`,
+        subject: actor,
+        detail: { kind: 'lifesteal', actorId: actor, amount: heal },
+      })
+    }
+  } else {
+    const tag = buildStatusForSkill(action.skillId, entry.statusStacks, me.traits.statusPotency)
+    for (const { targetId } of hitList) {
+      const afterStatus = addStatusToTarget(next, targetId, tag)
+      next = afterStatus.state
+      castEntries = [...castEntries, ...statusReactionEntries(targetId, afterStatus.messages)]
+    }
   }
   if (spellRelievedIds.length > 0) {
     castEntries.push({
@@ -1461,6 +1663,7 @@ export function applyAction(
     return { state: next }
   }
 
+  next = bumpPhysicalOffenseStreak(next, actor, def)
   next = advanceTurn(next, actor)
   return { state: next }
 }
@@ -1539,29 +1742,25 @@ export function legalCasts(state: GameState, actor: ActorId): { skillId: SkillId
   if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
-  if (hasSilenced(me)) return []
   const out: { skillId: SkillId; target: Coord }[] = []
 
   for (const entry of state.loadouts[actor]) {
     const def = getSkillDef(entry.skillId)
+    if (def.school === 'magic' && hasSilenced(me)) continue
+    if (def.school === 'physical' && hasDisarmed(me)) continue
     if (!patternRespectsAoE(entry.pattern, def, entry)) continue
     const maxRange = effectiveCastRangeForLoadout(def, entry, me.traits)
-
-    if (def.selfTarget) {
-      const target = me.pos
-      if (manhattan(me.pos, target) > maxRange) continue
-      if (!patternFullyInBounds(target, entry.pattern, state.size)) continue
-      if (me.mana < manaCostForCast(entry, 0)) continue
-      out.push({ skillId: entry.skillId, target })
-      continue
-    }
+    const minRange = minCastManhattanForLoadout(def, entry)
 
     for (let y = 0; y < state.size; y++) {
       for (let x = 0; x < state.size; x++) {
         const target = { x, y }
-        if (manhattan(me.pos, target) > maxRange) continue
+        const d = manhattan(me.pos, target)
+        if (d > maxRange || d < minRange) continue
         if (!patternFullyInBounds(target, entry.pattern, state.size)) continue
-        if (me.mana < manaCostForCast(entry, manhattan(me.pos, target))) continue
+        const cost = castResourceCost(entry, def, d)
+        if (def.school === 'magic' && me.mana < cost) continue
+        if (def.school === 'physical' && me.stamina < cost) continue
         out.push({ skillId: entry.skillId, target })
       }
     }
@@ -1570,59 +1769,45 @@ export function legalCasts(state: GameState, actor: ActorId): { skillId: SkillId
 }
 
 /**
- * All cells you may use as cast anchors for one skill (range + pattern in bounds, enough mana).
+ * All cells you may use as cast anchors for one skill (range + pattern in bounds, enough mana/stamina).
  * Includes targets that do not overlap the enemy — use with {@link legalCasts} for full vs miss highlights.
  */
 export function castReachableAnchors(state: GameState, actor: ActorId, skillId: SkillId): Coord[] {
   if (state.winner || state.tie || state.turn !== actor) return []
   const me = state.actors[actor]
   if (hasFrozen(me)) return []
-  if (hasSilenced(me)) return []
   const entry = loadoutEntry(actor, skillId, state)
   if (!entry) return []
   const def = getSkillDef(skillId)
+  if (def.school === 'magic' && hasSilenced(me)) return []
+  if (def.school === 'physical' && hasDisarmed(me)) return []
   if (!patternRespectsAoE(entry.pattern, def, entry)) return []
   const maxRange = effectiveCastRangeForLoadout(def, entry, me.traits)
+  const minRange = minCastManhattanForLoadout(def, entry)
   const out: Coord[] = []
-  if (def.selfTarget) {
-    const target = me.pos
-    if (
-      manhattan(me.pos, target) <= maxRange &&
-      patternFullyInBounds(target, entry.pattern, state.size) &&
-      me.mana >= manaCostForCast(entry, 0)
-    ) {
-      out.push(target)
-    }
-    return out
-  }
   for (let y = 0; y < state.size; y++) {
     for (let x = 0; x < state.size; x++) {
       const target = { x, y }
-      if (manhattan(me.pos, target) > maxRange) continue
+      const d = manhattan(me.pos, target)
+      if (d > maxRange || d < minRange) continue
       if (!patternFullyInBounds(target, entry.pattern, state.size)) continue
-      if (me.mana < manaCostForCast(entry, manhattan(me.pos, target))) continue
+      const cost = castResourceCost(entry, def, d)
+      if (def.school === 'magic' && me.mana < cost) continue
+      if (def.school === 'physical' && me.stamina < cost) continue
       out.push(target)
     }
   }
   return out
 }
 
-export function canStrike(state: GameState, actor: ActorId): boolean {
-  return legalStrikeTargets(state, actor).length > 0
-}
-
 export function allLegalActions(state: GameState, actor: ActorId): GameAction[] {
   const moves = legalMoves(state, actor).map((to) => ({ type: 'move' as const, to }))
-  const strikes: GameAction[] = legalStrikeTargets(state, actor).map((targetId) => ({
-    type: 'strike' as const,
-    targetId,
-  }))
   const casts = legalCasts(state, actor).map((c) => ({
     type: 'cast' as const,
     skillId: c.skillId,
     target: c.target,
   }))
-  const base = [...moves, ...strikes, ...casts]
+  const base = [...moves, ...casts]
   if (state.winner || state.tie || state.turn !== actor) return base
   const me = state.actors[actor]
   if (!me || hasFrozen(me)) return base

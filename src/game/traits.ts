@@ -1,11 +1,10 @@
 import type { Element } from './elements'
 import type { StatusTag, TraitPoints } from './types'
 
-/** Max stamina pool scales with agility (Move + Strike costs draw from this pool). */
+/** Max stamina pool scales with agility (movement and physical skills draw from this pool). */
 export const STAMINA_BASE_MAX = 8
 export const STAMINA_MAX_PER_AGILITY = 2
 export const STAMINA_MOVE_COST_PER_TILE = 1
-export const STAMINA_STRIKE_COST = 3
 export const STAMINA_REGEN_PER_TURN = 3
 
 export function maxStaminaForTraits(t: TraitPoints): number {
@@ -164,17 +163,17 @@ export function strikeDamage(strength: number): number {
 
 /**
  * Total physical Strike damage before adjacent duel reduction and fortitude.
- * `strikeStreakBefore` is the attacker's streak before this Strike lands.
+ * `physicalStreakBefore` is the attacker's streak before this Strike lands.
  */
 export function totalStrikeDamage(
   traits: TraitPoints,
   tilesMovedThisTurn: number,
-  strikeStreakBefore: number,
+  physicalStreakBefore: number,
 ): number {
   const base = strikeDamage(traits.strength)
   let bonus = 0
   if (tilesMovedThisTurn <= 1) bonus += traits.strikeTempo
-  const nextStreak = strikeStreakBefore + 1
+  const nextStreak = physicalStreakBefore + 1
   if (nextStreak >= 2 && nextStreak % 2 === 0) bonus += traits.strikeRhythm
   return Math.max(1, base + bonus)
 }

@@ -18,7 +18,7 @@ function minimalActor(id: string, displayName: string): ActorState {
     moveMaxSteps: 2,
     manaRegenPerTurn: 1,
     tilesMovedThisTurn: 0,
-    strikeStreak: 0,
+    physicalStreak: 0,
     statuses: [],
   }
 }

@@ -44,7 +44,7 @@ export function matchSettingsDuel(args: {
   return {
     roster,
     humanActorId: TID.human,
-    friendlyFire: false,
+    friendlyFire: true,
     defaultCpuDifficulty: 'normal',
     perCpuDifficulty: { [TID.cpu]: 'normal' },
   }
@@ -94,7 +94,7 @@ export function matchSettingsFfa(args: {
   return {
     roster,
     humanActorId: TID.human,
-    friendlyFire: false,
+    friendlyFire: true,
     defaultCpuDifficulty: 'normal',
     perCpuDifficulty: {
       [TID.cpu]: 'normal',

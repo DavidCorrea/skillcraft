@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { boardSizeForLevel, boardSizeForMatch, cornerCells, spawnPositionsForActors } from './board'
+import {
+  boardSizeForLevel,
+  boardSizeForMatch,
+  cornerCells,
+  isOpponentActor,
+  spawnPositionsForActors,
+} from './board'
 
 describe('boardSizeForMatch', () => {
   it('matches level curve for duels', () => {
@@ -27,6 +33,26 @@ describe('cornerCells', () => {
       { x: 6, y: 6 },
       { x: 0, y: 6 },
     ])
+  })
+})
+
+describe('isOpponentActor', () => {
+  const teams = { a: 0, b: 0, c: 1 } as Record<string, number>
+
+  it('is false for self', () => {
+    expect(isOpponentActor('teams', teams, 'a', 'a')).toBe(false)
+  })
+
+  it('is false for same-team pair in teams mode', () => {
+    expect(isOpponentActor('teams', teams, 'a', 'b')).toBe(false)
+  })
+
+  it('is true for different teams in teams mode', () => {
+    expect(isOpponentActor('teams', teams, 'a', 'c')).toBe(true)
+  })
+
+  it('is true for any distinct pair in FFA', () => {
+    expect(isOpponentActor('ffa', teams, 'a', 'b')).toBe(true)
   })
 })
 

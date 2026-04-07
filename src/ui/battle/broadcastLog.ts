@@ -212,6 +212,25 @@ const CASTER_CAST_WARD = ['{name} throws up wards — barrier game.', '{name} re
 
 const CASTER_PURGE = ['{name} cleanses {n} — debuffs peeled.', 'Purge lands — {n} cleared.'] as const
 
+const CASTER_FOCUS = ['{name} sharpens the next hit — focus online.', '{name} lines up the follow-up cast.'] as const
+
+const CASTER_WARDBREAK = ['{name} tears down barriers — wardbreak.', 'Shields buckle under {name}.'] as const
+
+const CASTER_IMMUNIZE = ['{name} layers debuff insurance.', '{name} immunizes the team.'] as const
+
+const CASTER_OVERCLOCK = [
+  '{name} spikes mana — overclock tax incoming.',
+  '{name} surges resources; legs get heavy after.',
+] as const
+
+const CPU_FOCUS = ['Next cast hits harder.', 'Locked in.', 'Saving the spike.'] as const
+
+const CPU_WARDBREAK = ['Barriers down.', 'Shred the ward.', 'Shield game answered.'] as const
+
+const CPU_IMMUNIZE = ['Clean window.', 'Debuffs bounce.', 'Stacking immunity.'] as const
+
+const CPU_OVERCLOCK = ['Borrowed mana.', 'Pay the slow later.', 'Surge now, drag next.'] as const
+
 const CASTER_LINGER = [
   '{name} leaves energy on the tiles — residual pressure.',
   'Residual field from {name} — watch your steps.',
@@ -433,10 +452,10 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
       })
       break
     }
-    case 'cast_self_heal': {
+    case 'cast_area_heal': {
       const name = displayName(game, d.actorId)
       rows.push({
-        text: fill(pickPhrase(seed, CASTER_CAST_HEAL), { name, n: d.heal }),
+        text: fill(pickPhrase(seed, CASTER_CAST_HEAL), { name, n: d.totalHeal }),
         voice: 'caster',
       })
       rows.push({
@@ -447,7 +466,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
       })
       break
     }
-    case 'cast_self_ward': {
+    case 'cast_area_ward': {
       const name = displayName(game, d.actorId)
       rows.push({
         text: fill(pickPhrase(seed, CASTER_CAST_WARD), { name }),
@@ -461,14 +480,71 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
       })
       break
     }
-    case 'cast_self_purge': {
+    case 'cast_area_purge': {
       const name = displayName(game, d.actorId)
+      const n = d.targets.reduce((s, t) => s + t.cleanseCount, 0)
       rows.push({
-        text: fill(pickPhrase(seed, CASTER_PURGE), { name, n: d.cleanseCount }),
+        text: fill(pickPhrase(seed, CASTER_PURGE), { name, n }),
         voice: 'caster',
       })
       rows.push({
         text: fpBanter(CPU_PURGE, [seed, 'purge', d.actorId]),
+        subject: d.actorId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'cast_area_focus': {
+      const name = displayName(game, d.actorId)
+      rows.push({
+        text: fill(pickPhrase(seed, CASTER_FOCUS), { name }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: fpBanter(CPU_FOCUS, [seed, 'focus', d.actorId]),
+        subject: d.actorId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'cast_area_wardbreak': {
+      const name = displayName(game, d.actorId)
+      rows.push({
+        text: fill(pickPhrase(seed, CASTER_WARDBREAK), { name }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: fpBanter(CPU_WARDBREAK, [seed, 'wardbreak', d.actorId]),
+        subject: d.actorId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'cast_area_immunize': {
+      const name = displayName(game, d.actorId)
+      rows.push({
+        text: fill(pickPhrase(seed, CASTER_IMMUNIZE), { name }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: fpBanter(CPU_IMMUNIZE, [seed, 'immunize', d.actorId]),
+        subject: d.actorId,
+        voice: 'actor',
+        banter: true,
+      })
+      break
+    }
+    case 'cast_area_overclock': {
+      const name = displayName(game, d.actorId)
+      rows.push({
+        text: fill(pickPhrase(seed, CASTER_OVERCLOCK), { name }),
+        voice: 'caster',
+      })
+      rows.push({
+        text: fpBanter(CPU_OVERCLOCK, [seed, 'overclock', d.actorId]),
         subject: d.actorId,
         voice: 'actor',
         banter: true,

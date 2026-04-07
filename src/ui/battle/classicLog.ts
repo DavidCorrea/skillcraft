@@ -131,31 +131,42 @@ export function formatClassicRow(
       }
     }
 
-    case 'cast_self_heal': {
+    case 'cast_area_heal': {
       const name = getSkillDef(d.skillId).name
-      const heal = d.heal
+      const heal = d.totalHeal
       const cost = d.manaCost
+      const tgt = d.targets.length
       if (isHuman(game, d.actorId)) {
-        return { text: `${label(game, d.actorId)} casts ${name} for +${heal} HP (${cost} mana).`, subject: d.actorId }
+        return {
+          text:
+            tgt === 1
+              ? `${label(game, d.actorId)} casts ${name} for +${d.targets[0]!.heal} HP (${cost} mana).`
+              : `${label(game, d.actorId)} casts ${name} for +${heal} HP (${tgt} targets, ${cost} mana).`,
+          subject: d.actorId,
+        }
       }
       return {
-        text: pickCpuLine(logIndex, d.actorId, 'cast_self_heal', [
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_heal', [
           `I cast ${name} for +${heal} HP (${cost} mana).`,
           `${name}: +${heal} HP (${cost} mana).`,
-          `Self-heal with ${name}—+${heal} (${cost} mana).`,
+          `Heal with ${name}—+${heal} (${cost} mana).`,
         ]),
         subject: d.actorId,
       }
     }
 
-    case 'cast_self_ward': {
+    case 'cast_area_ward': {
       const name = getSkillDef(d.skillId).name
       const cost = d.manaCost
+      const n = d.targetIds.length
       if (isHuman(game, d.actorId)) {
-        return { text: `${label(game, d.actorId)} casts ${name} (${cost} mana).`, subject: d.actorId }
+        return {
+          text: `${label(game, d.actorId)} casts ${name} (${n} target${n === 1 ? '' : 's'}, ${cost} mana).`,
+          subject: d.actorId,
+        }
       }
       return {
-        text: pickCpuLine(logIndex, d.actorId, 'cast_self_ward', [
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_ward', [
           `I cast ${name} (${cost} mana).`,
           `Warding up—${name} (${cost} mana).`,
           `${name} (${cost} mana).`,
@@ -164,18 +175,103 @@ export function formatClassicRow(
       }
     }
 
-    case 'cast_self_purge': {
+    case 'cast_area_purge': {
       const name = getSkillDef(d.skillId).name
-      const n = d.cleanseCount
+      const sum = d.targets.reduce((s, t) => s + t.cleanseCount, 0)
       const cost = d.manaCost
       if (isHuman(game, d.actorId)) {
-        return { text: `${label(game, d.actorId)} casts ${name}, cleanse ${n} (${cost} mana).`, subject: d.actorId }
+        return {
+          text:
+            d.targets.length === 1
+              ? `${label(game, d.actorId)} casts ${name}, cleanse ${d.targets[0]!.cleanseCount} (${cost} mana).`
+              : `${label(game, d.actorId)} casts ${name}, cleanse ${sum} total (${d.targets.length} targets, ${cost} mana).`,
+          subject: d.actorId,
+        }
       }
       return {
-        text: pickCpuLine(logIndex, d.actorId, 'cast_self_purge', [
-          `I cast ${name}, cleanse ${n} (${cost} mana).`,
-          `Purging—${name}, ${n} cleared (${cost} mana).`,
-          `${name}: cleanse ${n} (${cost} mana).`,
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_purge', [
+          `I cast ${name}, cleanse ${sum} (${cost} mana).`,
+          `Purging—${name}, ${sum} cleared (${cost} mana).`,
+          `${name}: cleanse ${sum} (${cost} mana).`,
+        ]),
+        subject: d.actorId,
+      }
+    }
+
+    case 'cast_area_focus': {
+      const name = getSkillDef(d.skillId).name
+      const cost = d.manaCost
+      const n = d.targets.length
+      if (isHuman(game, d.actorId)) {
+        return {
+          text: `${label(game, d.actorId)} casts ${name} (${n} target${n === 1 ? '' : 's'}, ${cost} mana).`,
+          subject: d.actorId,
+        }
+      }
+      return {
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_focus', [
+          `I cast ${name} (${cost} mana).`,
+          `${name}—focus up (${cost} mana).`,
+        ]),
+        subject: d.actorId,
+      }
+    }
+
+    case 'cast_area_wardbreak': {
+      const name = getSkillDef(d.skillId).name
+      const cost = d.manaCost
+      const sum = d.targets.reduce((s, t) => s + t.stripped, 0)
+      if (isHuman(game, d.actorId)) {
+        return {
+          text:
+            d.targets.length === 1
+              ? `${label(game, d.actorId)} casts ${name}, shreds ${d.targets[0]!.stripped} shield (${cost} mana).`
+              : `${label(game, d.actorId)} casts ${name}, shreds ${sum} shield (${d.targets.length} targets, ${cost} mana).`,
+          subject: d.actorId,
+        }
+      }
+      return {
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_wardbreak', [
+          `I cast ${name} (${cost} mana).`,
+          `${name}—shields crack (${cost} mana).`,
+        ]),
+        subject: d.actorId,
+      }
+    }
+
+    case 'cast_area_immunize': {
+      const name = getSkillDef(d.skillId).name
+      const cost = d.manaCost
+      const n = d.targets.length
+      if (isHuman(game, d.actorId)) {
+        return {
+          text: `${label(game, d.actorId)} casts ${name} (${n} target${n === 1 ? '' : 's'}, ${cost} mana).`,
+          subject: d.actorId,
+        }
+      }
+      return {
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_immunize', [
+          `I cast ${name} (${cost} mana).`,
+          `${name}—warding debuffs (${cost} mana).`,
+        ]),
+        subject: d.actorId,
+      }
+    }
+
+    case 'cast_area_overclock': {
+      const name = getSkillDef(d.skillId).name
+      const cost = d.manaCost
+      const n = d.targets.length
+      if (isHuman(game, d.actorId)) {
+        return {
+          text: `${label(game, d.actorId)} casts ${name} (${n} target${n === 1 ? '' : 's'}, ${cost} mana).`,
+          subject: d.actorId,
+        }
+      }
+      return {
+        text: pickCpuLine(logIndex, d.actorId, 'cast_area_overclock', [
+          `I cast ${name} (${cost} mana).`,
+          `${name}—surge and tax (${cost} mana).`,
         ]),
         subject: d.actorId,
       }

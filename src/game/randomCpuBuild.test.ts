@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CpuDifficulty, TraitPoints } from './types'
-import { getSkillDef, maxSkillsForLevel, totalLoadoutPoints, validateLoadout } from './skills'
+import { maxSkillsForLevel, totalLoadoutPoints, validateLoadout } from './skills'
 import { randomCpuBuild, randomFullPlayerLoadout } from './randomCpuBuild'
 import { totalTraitPoints } from './traits'
 
@@ -60,13 +60,12 @@ describe('randomCpuBuild', () => {
 })
 
 describe('randomFullPlayerLoadout', () => {
-  it('sometimes rolls non-trivial pattern offsets or tiers for non–self-target skills at mid levels', () => {
+  it('sometimes rolls non-trivial pattern offsets or tiers at mid levels', () => {
     let sawNonOriginOffset = false
     let sawNonZeroTier = false
     for (let i = 0; i < 200; i++) {
       const { entries } = randomFullPlayerLoadout(12)
       for (const e of entries) {
-        if (getSkillDef(e.skillId).selfTarget) continue
         if (e.pattern.some((o) => o.dx !== 0 || o.dy !== 0)) sawNonOriginOffset = true
         if ((e.rangeTier ?? 0) > 0 || (e.aoeTier ?? 0) > 0) sawNonZeroTier = true
       }

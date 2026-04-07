@@ -10,7 +10,7 @@ describe('PRESET_PLAYER_BUILDS', () => {
     }
   })
 
-  it('every preset spends exactly the level budget', () => {
+  it('every preset fills the level budget (traits + skill tuning)', () => {
     for (const p of PRESET_PLAYER_BUILDS) {
       expect(totalLoadoutPoints(p.entries, p.traits), p.id).toBe(p.level)
     }

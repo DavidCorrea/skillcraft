@@ -24,6 +24,12 @@ describe('formatStatusLine', () => {
     expect(formatStatusLine({ id: '1', tag: { t: 'shield', amount: 12 } })).toBe('Shield — 12 absorb')
   })
 
+  it('formats skill focus', () => {
+    expect(formatStatusLine({ id: '1', tag: { t: 'skillFocus', bonus: 5 } })).toBe(
+      'Focus — +5 on next spell damage',
+    )
+  })
+
   it('formats frozen skips', () => {
     expect(formatStatusLine({ id: '1', tag: { t: 'frozen', turns: 1 } })).toBe('Frozen — skip 1 turn')
   })
@@ -36,12 +42,12 @@ describe('formatSkillInspectLine', () => {
       skillId: 'ember',
       pattern: [{ dx: 0, dy: 0 }],
       statusStacks: 2,
-      manaDiscount: 0,
+      costDiscount: 0,
     }
     const line = formatSkillInspectLine(entry, traits)
     expect(line).toContain('Ember')
     expect(line).toContain('fire')
-    expect(line).toMatch(/\d+–\d+ MP/)
+    expect(line).toMatch(/\d+([–-]\d+)? MP/)
   })
 })
 
@@ -49,12 +55,12 @@ describe('traitZonesForInspect', () => {
   it('groups traits by zone with non-zero before zeros in each zone', () => {
     const t = defaultTraitPoints()
     const zones = traitZonesForInspect({ ...t, agility: 2 })
-    expect(zones[0]?.title).toBe('Core')
-    const coreRows = zones[0]!.rows
-    const firstZeroIdx = coreRows.findIndex((r) => r.value === 0)
-    expect(coreRows[0]?.label).toBe('Agility')
-    expect(coreRows[0]?.value).toBe(2)
-    expect(coreRows.slice(0, firstZeroIdx).every((r) => r.value > 0)).toBe(true)
+    expect(zones[2]?.title).toBe('Utility')
+    const utilRows = zones[2]!.rows
+    const firstZeroIdx = utilRows.findIndex((r) => r.value === 0)
+    expect(utilRows[0]?.label).toBe('Agility')
+    expect(utilRows[0]?.value).toBe(2)
+    expect(utilRows.slice(0, firstZeroIdx).every((r) => r.value > 0)).toBe(true)
   })
 })
 

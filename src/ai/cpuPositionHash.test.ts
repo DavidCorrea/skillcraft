@@ -8,12 +8,12 @@ import { duelBattleConfig, TID } from '../game/test-fixtures'
 const cfg: BattleConfig = duelBattleConfig({
   level: 8,
   playerLoadout: [
-    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
-    { skillId: 'tide_touch', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
+    { skillId: 'tide_touch', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
   ],
   cpuLoadout: [
-    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
-    { skillId: 'spark', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
+    { skillId: 'spark', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
   ],
   playerTraits: defaultTraitPoints(),
   cpuTraits: defaultTraitPoints(),

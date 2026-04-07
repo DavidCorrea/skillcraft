@@ -9,9 +9,17 @@ import { describeBattleCellTooltip } from './cell-tooltip'
 const sampleConfig: BattleConfig = duelBattleConfig({
   level: 8,
   playerLoadout: [
-    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+    {
+      skillId: 'ember',
+      pattern: [{ dx: 0, dy: 0 }],
+      statusStacks: 2,
+      costDiscount: 0,
+      rangeTier: 3,
+    },
   ],
-  cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 }],
+  cpuLoadout: [
+    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0, rangeTier: 3 },
+  ],
   playerTraits: defaultTraitPoints(),
   cpuTraits: defaultTraitPoints(),
 })
@@ -61,6 +69,22 @@ describe('describeBattleCellTooltip', () => {
     const next: GameState = { ...s, actors: { ...s.actors, [TID.human]: player } }
     const t = describeBattleCellTooltip(next, player.pos)
     expect(t).toContain('burning')
+  })
+
+  it('groups duplicate status kinds in the one-line summary (e.g. two slows)', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const player = {
+      ...s.actors[TID.human]!,
+      statuses: [
+        { id: 'a', tag: { t: 'slowed' as const, duration: 2 } },
+        { id: 'b', tag: { t: 'slowed' as const, duration: 3 } },
+      ],
+    }
+    const next: GameState = { ...s, actors: { ...s.actors, [TID.human]: player } }
+    const t = describeBattleCellTooltip(next, player.pos)
+    expect(t).toContain('slowed ×2')
+    expect(t).not.toMatch(/slowed,\s*slowed/)
   })
 
   it('describes hazard and actor when both present', () => {

@@ -12,16 +12,26 @@ import {
 } from './engine'
 import type { BattleConfig, MatchSettings } from './types'
 import { coordKey } from './board'
-import { defaultTraitPoints, STAMINA_REGEN_PER_TURN, STAMINA_STRIKE_COST } from './traits'
+import { defaultTraitPoints, STAMINA_REGEN_PER_TURN } from './traits'
+import { focusBonusDamage } from './skills'
 import { duelBattleConfig, matchSettingsFfa, TID } from './test-fixtures'
 
 const sampleConfig: BattleConfig = duelBattleConfig({
   level: 8,
   playerLoadout: [
-    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
-    { skillId: 'frost_bolt', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 },
+    {
+      skillId: 'ember',
+      pattern: [{ dx: 0, dy: 0 }],
+      statusStacks: 2,
+      costDiscount: 0,
+      rangeTier: 3,
+    },
+    { skillId: 'frost_bolt', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0 },
+    { skillId: 'strike', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 },
   ],
-  cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, manaDiscount: 0 }],
+  cpuLoadout: [
+    { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 2, costDiscount: 0, rangeTier: 3 },
+  ],
   playerTraits: defaultTraitPoints(),
   cpuTraits: defaultTraitPoints(),
 })
@@ -88,11 +98,15 @@ describe('applyAction', () => {
     expect(r.error).toBe('Not your turn.')
   })
 
-  it('rejects strike when not adjacent to enemy', () => {
+  it('rejects strike cast when anchor is out of melee range', () => {
     resetIdsForTests()
     const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
-    const r = applyAction(s, TID.human, { type: 'strike' })
-    expect(r.error).toMatch(/adjacent/)
+    const r = applyAction(s, TID.human, {
+      type: 'cast',
+      skillId: 'strike',
+      target: s.actors[TID.cpu]!.pos,
+    })
+    expect(r.error).toMatch(/range/i)
   })
 
   it('deducts stamina on move', () => {
@@ -104,18 +118,18 @@ describe('applyAction', () => {
     expect(r.state!.actors[TID.human]!.stamina).toBe(startStamina - 1)
   })
 
-  it('rejects strike when stamina is too low', () => {
+  it('rejects strike cast when stamina is too low', () => {
     resetIdsForTests()
     const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const low = {
       ...s,
       actors: {
         ...s.actors,
-        [TID.human]: { ...s.actors[TID.human]!, stamina: STAMINA_STRIKE_COST - 1 },
+        [TID.human]: { ...s.actors[TID.human]!, stamina: 1 },
         [TID.cpu]: { ...s.actors[TID.cpu]!, pos: { x: 3, y: 5 } },
       },
     }
-    const r = applyAction(low, TID.human, { type: 'strike' })
+    const r = applyAction(low, TID.human, { type: 'cast', skillId: 'strike', target: { x: 3, y: 5 } })
     expect(r.error).toMatch(/stamina/i)
   })
 
@@ -126,6 +140,41 @@ describe('applyAction', () => {
     expect(r.error).toBeUndefined()
     expect(r.state!.turn).toBe(TID.cpu)
     expect(r.state!.log.some((l) => l.text.includes('skips'))).toBe(true)
+  })
+
+  it('consumes skill focus for extra damage on the next offensive cast', () => {
+    resetIdsForTests()
+    const cfg = duelBattleConfig({
+      level: 15,
+      playerLoadout: [
+        { skillId: 'focus', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 },
+        {
+          skillId: 'ember',
+          pattern: [{ dx: 0, dy: 0 }],
+          statusStacks: 1,
+          costDiscount: 0,
+          rangeTier: 5,
+        },
+      ],
+      cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 }],
+      playerTraits: defaultTraitPoints(),
+      cpuTraits: defaultTraitPoints(),
+    })
+    let s = createInitialState(cfg, { randomizeTurnOrder: false })
+    const cpuHpBefore = s.actors[TID.cpu]!.hp
+    const humanPos = s.actors[TID.human]!.pos
+    const rFocus = applyAction(s, TID.human, { type: 'cast', skillId: 'focus', target: humanPos })
+    expect(rFocus.error).toBeUndefined()
+    s = rFocus.state!
+    expect(s.actors[TID.human]!.statuses.some((x) => x.tag.t === 'skillFocus')).toBe(true)
+    s = applyAction(s, TID.cpu, { type: 'skip' }).state!
+    const cpuPos = s.actors[TID.cpu]!.pos
+    const rEmber = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: cpuPos })
+    expect(rEmber.error).toBeUndefined()
+    s = rEmber.state!
+    expect(s.actors[TID.human]!.statuses.some((x) => x.tag.t === 'skillFocus')).toBe(false)
+    const dmg = cpuHpBefore - s.actors[TID.cpu]!.hp
+    expect(dmg).toBeGreaterThanOrEqual(1 + focusBonusDamage(1, 0))
   })
 })
 
@@ -281,12 +330,19 @@ const ffaConfig: BattleConfig = {
   }),
 }
 
-describe('multi-actor strike', () => {
-  it('rejects ambiguous strike without targetId when two enemies are adjacent', () => {
+describe('multi-actor strike cast', () => {
+  it('accepts strike cast anchored on a chosen adjacent enemy', () => {
     resetIdsForTests()
+    const strikeSlot = {
+      skillId: 'strike' as const,
+      pattern: [{ dx: 0, dy: 0 }],
+      statusStacks: 1,
+      costDiscount: 0,
+    }
     let s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
     s = {
       ...s,
+      loadouts: { ...s.loadouts, [TID.human]: [...s.loadouts[TID.human]!, strikeSlot] },
       actors: {
         ...s.actors,
         [TID.human]: { ...s.actors[TID.human]!, pos: { x: 3, y: 3 } },
@@ -295,24 +351,7 @@ describe('multi-actor strike', () => {
         [TID.cpu3]: { ...s.actors[TID.cpu3]!, pos: { x: 0, y: 0 } },
       },
     }
-    const r = applyAction(s, TID.human, { type: 'strike' })
-    expect(r.error).toMatch(/choose|target/i)
-  })
-
-  it('accepts strike with explicit targetId', () => {
-    resetIdsForTests()
-    let s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
-    s = {
-      ...s,
-      actors: {
-        ...s.actors,
-        [TID.human]: { ...s.actors[TID.human]!, pos: { x: 3, y: 3 } },
-        [TID.cpu]: { ...s.actors[TID.cpu]!, pos: { x: 3, y: 2 } },
-        [TID.cpu2]: { ...s.actors[TID.cpu2]!, pos: { x: 2, y: 3 } },
-        [TID.cpu3]: { ...s.actors[TID.cpu3]!, pos: { x: 0, y: 0 } },
-      },
-    }
-    const r = applyAction(s, TID.human, { type: 'strike', targetId: TID.cpu })
+    const r = applyAction(s, TID.human, { type: 'cast', skillId: 'strike', target: { x: 3, y: 2 } })
     expect(r.error).toBeUndefined()
   })
 })

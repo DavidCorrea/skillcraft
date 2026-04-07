@@ -7,8 +7,8 @@ import { castResolveStaggerMap, knockbackMoveFx, statusPieceClasses } from './fx
 
 const miniConfig: BattleConfig = duelBattleConfig({
   level: 1,
-  playerLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, manaDiscount: 0 }],
-  cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, manaDiscount: 0 }],
+  playerLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 }],
+  cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 }],
   playerTraits: defaultTraitPoints(),
   cpuTraits: defaultTraitPoints(),
 })

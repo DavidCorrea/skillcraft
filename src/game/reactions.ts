@@ -299,6 +299,12 @@ function applyDisrupt(list: StatusInstance[]): StatusInstance[] | null {
   return list.filter((s) => s.tag.t !== 'silenced')
 }
 
+/** Disarmed + shocked: remove disarmed (parity with Disrupt). */
+function applyGroundGrip(list: StatusInstance[]): StatusInstance[] | null {
+  if (!list.some((s) => s.tag.t === 'disarmed') || !list.some(isShocked)) return null
+  return list.filter((s) => s.tag.t !== 'disarmed')
+}
+
 /** Marked + (burn|poison|shock): bump mark extra. */
 function applyCalledShot(list: StatusInstance[]): StatusInstance[] | null {
   const mIdx = list.findIndex((s) => s.tag.t === 'marked')
@@ -354,7 +360,7 @@ function applyStagger(list: StatusInstance[]): StatusInstance[] | null {
  * After adding a new status, resolve pairwise reactions until stable.
  * Order: melt → evaporate (repeat) → detonate → overload → cauterize → coagulate → wildfire →
  * parch → melt ward → flash freeze → mud → rooted combos → crystallize → brittle →
- * caustic → conductive → disrupt → called shot → necrosis → tar → stagger.
+ * caustic → conductive → disrupt → ground grip → called shot → necrosis → tar → stagger.
  */
 export function resolveStatusesAfterAdd(
   before: StatusInstance[],
@@ -481,6 +487,12 @@ export function resolveStatusesAfterAdd(
     messages.push({ text: reactionMessages.disrupt, key: 'disrupt' })
   }
 
+  const gg = applyGroundGrip(statuses)
+  if (gg) {
+    statuses = gg
+    messages.push({ text: reactionMessages.groundGrip, key: 'groundGrip' })
+  }
+
   const cs = applyCalledShot(statuses)
   if (cs) {
     statuses = cs
@@ -532,11 +544,17 @@ export function cloneTag(tag: StatusTag): StatusTag {
       return { t: 'rooted', duration: tag.duration }
     case 'silenced':
       return { t: 'silenced', duration: tag.duration }
+    case 'disarmed':
+      return { t: 'disarmed', duration: tag.duration }
     case 'regenBlocked':
       return { t: 'regenBlocked', duration: tag.duration }
     case 'muddy':
       return { t: 'muddy', duration: tag.duration }
     case 'shield':
       return { t: 'shield', amount: tag.amount }
+    case 'skillFocus':
+      return { t: 'skillFocus', bonus: tag.bonus }
+    case 'immunized':
+      return { t: 'immunized', charges: tag.charges }
   }
 }

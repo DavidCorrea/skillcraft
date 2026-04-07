@@ -2,10 +2,21 @@ import type { GameAction } from '../game/engine'
 import { applyAction, allLegalActions, gatherOffensiveHits } from '../game/engine'
 import { cpuActionHistoryKey, hashCpuSearchPosition } from './cpuPositionHash'
 import type { ActorId, ActorState, CpuDifficulty, GameState } from '../game/types'
-import { canDamageTarget, coordKey, manhattan } from '../game/board'
+import { coordKey, isOpponentActor, manhattan } from '../game/board'
 import { currentOvertimeDamageAmount, isOvertimeLethal } from '../game/overtime'
-import { damageForCast, getSkillDef, mendHealAmount } from '../game/skills'
-import { physicalStrikeDamageDealt, totalStrikeDamage } from '../game/traits'
+import {
+  damageForCast,
+  focusBonusDamage,
+  getSkillDef,
+  immunizeChargesFromStacks,
+  isAdjacentPhysicalOffense,
+  mendHealAmount,
+  overclockManaRestore,
+  purgeCleanseCount,
+  wardbreakShredAmount,
+  wardShieldAmount,
+} from '../game/skills'
+import { physicalSkillDamageDealt, physicalStrikeDamageDealt, totalStrikeDamage } from '../game/traits'
 
 const WIN_SCORE = 1_000_000
 const LOSS_SCORE = -1_000_000
@@ -63,8 +74,6 @@ function gameActionsEqual(a: GameAction, b: GameAction): boolean {
       return true
     case 'move':
       return b.type === 'move' && a.to.x === b.to.x && a.to.y === b.to.y
-    case 'strike':
-      return b.type === 'strike' && (a.targetId ?? '') === (b.targetId ?? '')
     case 'cast':
       return (
         b.type === 'cast' &&
@@ -136,7 +145,7 @@ function enemyIds(state: GameState, actor: ActorId): ActorId[] {
   return state.turnOrder.filter((id) => {
     if (id === actor) return false
     if (state.actors[id]!.hp <= 0) return false
-    return canDamageTarget(state.matchMode, state.friendlyFire, state.teamByActor, actor, id)
+    return isOpponentActor(state.matchMode, state.teamByActor, actor, id)
   })
 }
 
@@ -473,32 +482,90 @@ function tacticalPriority(state: GameState, actor: ActorId, action: GameAction):
   const foe = closestEnemy(state, actor)
   if (!foe) return 0
 
-  if (action.type === 'strike') {
-    return 8_000_000
-  }
-
   if (action.type === 'cast') {
     const entry = state.loadouts[actor].find((e) => e.skillId === action.skillId)
     const def = getSkillDef(action.skillId)
     if (!entry) return 0
 
-    if (def.selfTarget) {
-      if (action.skillId === 'mend') {
-        const heal = mendHealAmount(entry.statusStacks, me.traits.statusPotency)
-        return 2_000_000 + heal * 24 + (me.maxHp - me.hp) * 8
+    if (def.damageKind === 'none') {
+      const hitList = gatherOffensiveHits(state, actor, action.target, entry.pattern)
+      const potency = me.traits.statusPotency
+      let s = 1_750_000
+      for (const { targetId, hits } of hitList) {
+        const t = state.actors[targetId]!
+        if (t.hp <= 0) continue
+        if (action.skillId === 'mend') {
+          const h = mendHealAmount(entry.statusStacks, potency) * hits
+          if (targetId === actor) s += h * 22 + (me.maxHp - me.hp) * 6
+          else if (sameTeam(state, actor, targetId)) s += h * 20
+          else s -= h * 28
+        } else if (action.skillId === 'ward') {
+          const w = wardShieldAmount(entry.statusStacks, potency) * hits
+          if (targetId === actor) s += w * 14
+          else if (sameTeam(state, actor, targetId)) s += w * 13
+          else s -= w * 17
+        } else if (action.skillId === 'purge') {
+          const c = purgeCleanseCount(entry.statusStacks) * hits
+          const debuffW = t.statuses.filter(
+            (st) => st.tag.t !== 'shield' && st.tag.t !== 'skillFocus' && st.tag.t !== 'immunized',
+          ).length
+          const weight = c * (6 + debuffW * 2)
+          if (targetId === actor) s += weight * 10
+          else if (sameTeam(state, actor, targetId)) s += weight * 9
+          else s -= weight * 14
+        } else if (action.skillId === 'focus') {
+          const b = focusBonusDamage(entry.statusStacks, potency) * hits
+          if (targetId === actor) s += b * 18
+          else if (sameTeam(state, actor, targetId)) s += b * 16
+          else s -= b * 12
+        } else if (action.skillId === 'wardbreak') {
+          const strip = wardbreakShredAmount(entry.statusStacks, potency) * hits
+          const sh = t.statuses.find((st) => st.tag.t === 'shield')
+          const amt = sh && sh.tag.t === 'shield' ? Math.min(sh.tag.amount, strip) : 0
+          if (isOpponentActor(state.matchMode, state.teamByActor, actor, targetId)) s += amt * 25
+          else s -= amt * 5
+        } else if (action.skillId === 'immunize') {
+          const ch = immunizeChargesFromStacks(entry.statusStacks) * hits
+          const debuffW = t.statuses.filter(
+            (st) => st.tag.t !== 'shield' && st.tag.t !== 'skillFocus' && st.tag.t !== 'immunized',
+          ).length
+          if (targetId === actor) s += ch * 45 + debuffW * 3
+          else if (sameTeam(state, actor, targetId)) s += ch * 40
+          else s -= ch * 20
+        } else if (action.skillId === 'overclock') {
+          const m = overclockManaRestore(entry.statusStacks, potency) * hits
+          if (targetId === actor) s += m * 15 + (me.maxMana - me.mana) * 2
+          else if (sameTeam(state, actor, targetId)) s += m * 12
+          else s -= m * 18
+        }
       }
-      return 1_600_000
+      return s
     }
 
     const hitList = gatherOffensiveHits(state, actor, action.target, entry.pattern)
-    let totalHits = 0
-    let totalDmg = 0
+    let foeDmg = 0
+    let foeHits = 0
+    let friendlyDmg = 0
+    let friendlyHits = 0
     for (const { targetId, hits } of hitList) {
-      totalHits += hits
       const t = state.actors[targetId]!
-      totalDmg += damageForCast(def, hits) * (t.hp > 0 ? 1 : 0)
+      if (t.hp <= 0) continue
+      const chunk =
+        action.skillId === 'strike'
+          ? totalStrikeDamage(me.traits, me.tilesMovedThisTurn, me.physicalStreak) * hits
+          : damageForCast(def, hits)
+      if (isOpponentActor(state.matchMode, state.teamByActor, actor, targetId)) {
+        foeDmg += chunk
+        foeHits += hits
+      } else {
+        friendlyDmg += chunk
+        friendlyHits += hits
+      }
     }
-    return 5_000_000 + totalDmg * 120 + totalHits * 80 + (totalHits > 0 ? 400 : 0)
+    let score = 5_000_000 + foeDmg * 120 + foeHits * 80 + (foeHits > 0 ? 400 : 0)
+    score -= friendlyDmg * 130 + friendlyHits * 90
+    if (action.skillId === 'strike' && foeHits > 0) score += 3_000_000
+    return score
   }
 
   if (action.type === 'move') {
@@ -536,8 +603,8 @@ function evaluateStaticDuel(state: GameState, perspectiveId: ActorId, opponentId
   score -= statusPressureOnActor(c) * 6
 
   if (dist === 1) {
-    const playerThreat = approxStrikeDamage(p, c)
-    const cpuThreat = approxStrikeDamage(c, p)
+    const playerThreat = approxAdjacentPhysicalThreat(state, opponentId, p, c)
+    const cpuThreat = approxAdjacentPhysicalThreat(state, perspectiveId, c, p)
     score -= playerThreat * 0.42
     score += cpuThreat * 0.34
   }
@@ -574,8 +641,8 @@ function evaluateStaticMulti(state: GameState, perspectiveId: ActorId): number {
   score += ((maxD - dist) / Math.max(1, maxD)) * 42
 
   if (dist === 1) {
-    score -= approxStrikeDamage(foe, me) * 0.42
-    score += approxStrikeDamage(me, foe) * 0.34
+    score -= approxAdjacentPhysicalThreat(state, foeId, foe, me) * 0.42
+    score += approxAdjacentPhysicalThreat(state, perspectiveId, me, foe) * 0.34
   }
 
   score += residualTilePressure(state, foe.pos, foeId) * 4
@@ -596,8 +663,29 @@ function extraVulnerabilityFlat(target: ActorState): number {
   return n
 }
 
-function approxStrikeDamage(attacker: ActorState, defender: ActorState): number {
-  const raw = totalStrikeDamage(attacker.traits, attacker.tilesMovedThisTurn, attacker.strikeStreak)
+function approxAdjacentPhysicalThreat(
+  state: GameState,
+  attackerId: ActorId,
+  attacker: ActorState,
+  defender: ActorState,
+): number {
+  let max = 0
+  for (const e of state.loadouts[attackerId] ?? []) {
+    const def = getSkillDef(e.skillId)
+    if (!isAdjacentPhysicalOffense(def)) continue
+    if (e.skillId === 'strike') {
+      max = Math.max(max, approxStrikeCastDamage(attacker, defender))
+      continue
+    }
+    const raw = damageForCast(def, 1)
+    const afterPhys = physicalSkillDamageDealt(raw, defender.traits, true)
+    max = Math.max(max, Math.max(1, afterPhys + extraVulnerabilityFlat(defender)))
+  }
+  return max
+}
+
+function approxStrikeCastDamage(attacker: ActorState, defender: ActorState): number {
+  const raw = totalStrikeDamage(attacker.traits, attacker.tilesMovedThisTurn, attacker.physicalStreak)
   return Math.max(
     1,
     physicalStrikeDamageDealt(raw, defender.traits) + extraVulnerabilityFlat(defender),

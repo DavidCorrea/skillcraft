@@ -112,7 +112,7 @@ export function randomCpuBuild(
         skillId: 'ember',
         pattern: [{ dx: 0, dy: 0 }],
         statusStacks: 1,
-        manaDiscount: 0,
+        costDiscount: 0,
         rangeTier: 0,
         aoeTier: 0,
       },
@@ -220,10 +220,10 @@ function pickDistinctSkillIdsForDifficulty(n: number, difficulty: CpuDifficulty)
 function skillPickWeight(id: SkillId, difficulty: CpuDifficulty): number {
   const def = getSkillDef(id)
   if (difficulty === 'hard') {
-    return 6 + def.baseDamage + (def.selfTarget ? 2 : 4)
+    return 6 + def.baseDamage + (def.damageKind === 'none' ? 2 : 4)
   }
   // nightmare
-  return 10 + def.baseDamage * 2 + (def.selfTarget ? 1 : 5)
+  return 10 + def.baseDamage * 2 + (def.damageKind === 'none' ? 1 : 5)
 }
 
 function weightedPickIndex(weights: number[]): number {
@@ -276,7 +276,7 @@ function tierRoll(cap: number, difficulty: CpuDifficulty): number {
   }
 }
 
-function manaDiscountRoll(maxDiscount: number, difficulty: CpuDifficulty): number {
+function costDiscountRoll(maxDiscount: number, difficulty: CpuDifficulty): number {
   if (maxDiscount === 0) return 0
   switch (difficulty) {
     case 'easy':
@@ -304,7 +304,7 @@ function randomOffensivePattern(
     skillId: def.id,
     pattern: [{ dx: 0, dy: 0 }],
     statusStacks: 1,
-    manaDiscount: 0,
+    costDiscount: 0,
     rangeTier,
     aoeTier,
   }
@@ -328,30 +328,22 @@ function tierCapForLevel(level: number): number {
 function randomEntryForSkill(skillId: SkillId, level: number, difficulty: CpuDifficulty): SkillLoadoutEntry {
   const def = getSkillDef(skillId)
   const cap = tierCapForLevel(level)
-  if (def.selfTarget) {
-    const pattern = [{ dx: 0, dy: 0 }]
-    const statusStacks = randInt(1, 5)
-    const base = pattern.length + statusStacks
-    const maxDiscount = Math.max(0, base - 1)
-    const manaDiscount = maxDiscount === 0 ? 0 : manaDiscountRoll(maxDiscount, difficulty)
-    return { skillId, pattern, statusStacks, manaDiscount, rangeTier: 0, aoeTier: 0 }
-  }
   const rangeTier = tierRoll(cap, difficulty)
   const aoeTier = tierRoll(cap, difficulty)
   const pattern = randomOffensivePattern(def, rangeTier, aoeTier, difficulty)
   const statusStacks = randInt(1, 5)
   const base = pattern.length + statusStacks
   const maxDiscount = Math.max(0, base - 1)
-  const manaDiscount = maxDiscount === 0 ? 0 : manaDiscountRoll(maxDiscount, difficulty)
-  const entry: SkillLoadoutEntry = { skillId, pattern, statusStacks, manaDiscount, rangeTier, aoeTier }
+  const costDiscount = maxDiscount === 0 ? 0 : costDiscountRoll(maxDiscount, difficulty)
+  const entry: SkillLoadoutEntry = { skillId, pattern, statusStacks, costDiscount, rangeTier, aoeTier }
   // Hard+ avoid wasteful 0-discount entries when cheaper mana exists (keeps points for traits/skills).
   if (
     (difficulty === 'hard' || difficulty === 'nightmare') &&
     maxDiscount > 0 &&
-    manaDiscount === 0 &&
+    costDiscount === 0 &&
     Math.random() < 0.65
   ) {
-    entry.manaDiscount = randInt(1, maxDiscount)
+    entry.costDiscount = randInt(1, maxDiscount)
   }
   return entry
 }

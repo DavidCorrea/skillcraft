@@ -25,9 +25,14 @@ export type StatusTag =
   | { t: 'marked'; duration: number; extra: number }
   | { t: 'rooted'; duration: number }
   | { t: 'silenced'; duration: number }
+  | { t: 'disarmed'; duration: number }
   | { t: 'regenBlocked'; duration: number }
   | { t: 'muddy'; duration: number }
   | { t: 'shield'; amount: number }
+  /** Next offensive skill cast adds this much flat damage per damage instance (consumed on cast). */
+  | { t: 'skillFocus'; bonus: number }
+  /** Blocks incoming harmful status applications; one charge per block. */
+  | { t: 'immunized'; charges: number }
 
 export interface StatusInstance {
   id: string
@@ -104,12 +109,13 @@ export interface ActorState {
   manaRegenPerTurn: number
   /** Orthogonal tiles moved this turn (reset at turn start). Used for Strike tempo. */
   tilesMovedThisTurn: number
-  /** Consecutive Strikes without Move/Cast in between (for rhythm). */
-  strikeStreak: number
+  /** Consecutive physical offense casts without a reset (move or magic cast); utility physical does not change this. */
+  physicalStreak: number
   statuses: StatusInstance[]
 }
 
 export type SkillId =
+  | 'strike'
   | 'ember'
   | 'frost_bolt'
   | 'tide_touch'
@@ -122,7 +128,15 @@ export type SkillId =
   | 'mend'
   | 'ward'
   | 'purge'
+  | 'focus'
+  | 'wardbreak'
+  | 'immunize'
+  | 'overclock'
   | 'splinter'
+  | 'cleave'
+  | 'shove'
+  | 'hamstring'
+  | 'rend'
   | 'caustic_cloud'
 
 /** Lingering skill energy on a board cell — harms enemies (per friendly-fire rules) when they enter. */
@@ -163,6 +177,7 @@ export type StatusReactionKey =
   | 'caustic'
   | 'conductive'
   | 'disrupt'
+  | 'groundGrip'
   | 'calledShot'
   | 'necrosis'
   | 'tar'
@@ -186,19 +201,54 @@ export type BattleLogDetail =
     }
   | { kind: 'lifesteal'; actorId: ActorId; amount: number }
   | {
-      kind: 'cast_self_heal'
+      kind: 'cast_area_heal'
       skillId: SkillId
       actorId: ActorId
-      heal: number
       manaCost: number
+      totalHeal: number
+      targets: { targetId: ActorId; heal: number }[]
     }
-  | { kind: 'cast_self_ward'; skillId: SkillId; actorId: ActorId; manaCost: number }
   | {
-      kind: 'cast_self_purge'
+      kind: 'cast_area_ward'
       skillId: SkillId
       actorId: ActorId
-      cleanseCount: number
       manaCost: number
+      targetIds: ActorId[]
+    }
+  | {
+      kind: 'cast_area_purge'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      targets: { targetId: ActorId; cleanseCount: number }[]
+    }
+  | {
+      kind: 'cast_area_focus'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      targets: { targetId: ActorId; bonus: number }[]
+    }
+  | {
+      kind: 'cast_area_wardbreak'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      targets: { targetId: ActorId; stripped: number }[]
+    }
+  | {
+      kind: 'cast_area_immunize'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      targets: { targetId: ActorId; charges: number }[]
+    }
+  | {
+      kind: 'cast_area_overclock'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      targets: { targetId: ActorId; manaRestored: number; slowTurns: number }[]
     }
   | { kind: 'cast_linger'; skillId: SkillId; actorId: ActorId; manaCost: number }
   | {
@@ -290,6 +340,7 @@ export interface GameState {
   /** Keyed by coordKey; residual effects from casts that can trigger when someone steps in. */
   impactedTiles: Record<string, TileImpact>
   matchMode: MatchMode
+  /** Copied from match settings; always true for new matches. */
   friendlyFire: boolean
   /** Same team id = allies in team mode. In FFA each actor should have a unique team id. */
   teamByActor: Record<ActorId, number>
@@ -323,11 +374,11 @@ export interface SkillLoadoutEntry {
   /** Status intensity: each stack costs 1 point (minimum 1). */
   statusStacks: number
   /**
-   * Extra loadout points spent to lower base mana in battle (1 pt each).
-   * Mana cost = max(1, pattern.length + statusStacks - manaDiscount + distance),
-   * where distance is Manhattan tiles from caster to cast anchor.
+   * Extra loadout points spent to lower cast cost in battle (1 pt each).
+   * Cost = max(1, pattern.length + statusStacks - costDiscount + distance),
+   * where distance is Manhattan tiles from caster to cast anchor (mana or stamina per skill school).
    */
-  manaDiscount: number
+  costDiscount: number
   /**
    * Per-skill cast range tiers beyond base + Arcane reach. Each tier +1 Manhattan range.
    * Loadout cost is triangular: tier T costs T*(T+1)/2 points total (0 = off).
@@ -364,7 +415,7 @@ export interface MatchSettings {
   roster: MatchRosterEntry[]
   /** Must equal the `actorId` of the unique `isHuman` row. */
   humanActorId: ActorId
-  /** True when any team has 2+ fighters — allies can be hit by skills/Strikes. Set from the roster in `match-roster` (`coerceFriendlyFire`). */
+  /** Always true when built via `match-roster` (`coerceFriendlyFire`); kept for saves / hashing. Combat does not restrict hits by team. */
   friendlyFire: boolean
   /** If set, clamped 7–15; else computed from level + actor count. */
   boardSize?: number
@@ -389,7 +440,7 @@ export interface MatchSettings {
  */
 export interface LegacyMatchSettings {
   mode: MatchMode
-  /** Ignored when building match settings — friendly fire is derived from the roster. */
+  /** Ignored when building match settings — coerced to true in `validateRosterMatch`. */
   friendlyFire: boolean
   boardSize?: number
   defaultCpuDifficulty: CpuDifficulty

@@ -5,7 +5,7 @@ Skillcraft is a **grid tactics** game: actors take turns to **move**, **strike**
 ## Match and sides
 
 - **Match mode** — `teams` (same `teamId` are allies) or `ffa` (everyone else is an enemy unless rules say otherwise).
-- **Friendly fire** — When **any team has more than one fighter**, skills and Strikes can hit allies (`canDamageTarget`). Not applicable in pure duel or FFA (each fighter is solo on their team). Self-damage from your own skills and residual tiles always applies.
+- **Targeting** — Skills, Strikes (adjacent actors), and residual tiles can hit **any** actor in range or on the affected cells, including allies and yourself (`canDamageTarget` is always on). CPU still evaluates **opponents** by team / FFA for search (`isOpponentActor`).
 - **Human** — Exactly one `humanActorId` in `MatchSettings`; that player controls one roster entry.
 - **CPU** — Other roster entries use `pickCpuAction` with per-actor **CPU difficulty**: `easy` | `normal` | `hard` (search depth differs in duels).
 
@@ -21,9 +21,9 @@ Allocated at loadout and **frozen at battle start**. They scale movement range, 
 
 ## Skills and loadout
 
-- Each **skill** has a definition in `skills.ts` (element, self-target vs ranged, etc.).
-- **Loadout** entries include: `skillId`, **pattern** (offsets from cast anchor — duplicate offsets mean multiple hits), **statusStacks**, optional **manaDiscount**, **rangeTier** (extra cast range / anchor reach), and **aoeTier** (extra pattern reach from anchor). **AoE tier 0** means only the anchor cell unless the skill sets a non-zero `aoeBase` on its definition; each tier adds +1 Chebyshev radius. Cast range and AoE use the same triangular loadout point curve per tier.
-- **Mana cost** scales with pattern size, stacks, discounts, and Manhattan distance from caster to target (unless self-target).
+- Each **skill** has a definition in `skills.ts` (element, damage kind, base range label, etc.).
+- **Loadout** entries include: `skillId`, **pattern** (offsets from cast anchor — duplicate offsets mean multiple hits), **statusStacks**, optional **manaDiscount**, **rangeTier** (extra cast range / anchor reach), and **aoeTier** (extra pattern reach from anchor). **AoE tier 0** means only the anchor cell unless the skill sets a non-zero `aoeBase` on its definition; each tier adds +1 Chebyshev radius. Cast range and AoE use the same triangular loadout point curve per tier. **Utility** skills (Mend, Ward, Purge — `damageKind: none`) use **min cast distance 0** (anchor may be your tile); damage skills at range tier 0 require a neighbor anchor. Utility max cast range also gains **+1 per 2 Arcane reach** (same formula as the old self-cast range).
+- **Mana cost** scales with pattern size, stacks, discounts, and Manhattan distance from caster to anchor.
 - **Tile impacts** — Some casts leave residual effects on cells (`TileImpact`); stepping in can apply status/damage.
 
 ## Actions (`GameAction`)

@@ -10,25 +10,81 @@ export type TraitRefEntry = {
   description: string
 }
 
+/** One line for elemental resist traits (label names the element). */
+function resistVsSkills(element: string): string {
+  return `Less ${element} skill damage per point (min 1). Not vs Strikes.`
+}
+
 /** Static guide copy for loadout traits — mirrors `TraitPoints` / loadout UI. */
 export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] = [
   {
-    title: 'Core',
+    title: 'Offense',
     traits: [
       {
-        key: 'agility',
-        short: 'AGI',
-        label: 'Agility',
-        description:
-          '+1 orthogonal move step per point per Move action (base is 1 step). Also increases max stamina.',
+        key: 'arcaneReach',
+        short: 'ARC',
+        label: 'Arcane reach',
+        description: '+1 skill cast range per 2 points.',
       },
       {
-        key: 'intelligence',
-        short: 'INT',
-        label: 'Intelligence',
-        description:
-          '+1 mana recovered at the start of each of your turns per point (on top of the base +1/turn).',
+        key: 'spellFocus',
+        short: 'FOC',
+        label: 'Spell focus',
+        description: 'Bonus elemental skill damage after the target’s resist (per hit).',
       },
+      {
+        key: 'statusPotency',
+        short: 'STA',
+        label: 'Status potency',
+        description: 'Stronger DoTs, shock, and status durations from your skills.',
+      },
+      {
+        key: 'strength',
+        short: 'STR',
+        label: 'Strength',
+        description: 'Strike base damage (before tempo, rhythm, and defender mitigations).',
+      },
+      {
+        key: 'bleedBonus',
+        short: 'BLD',
+        label: 'Bleed bonus',
+        description: 'Stronger bleed DoT and duration on Strike.',
+      },
+      {
+        key: 'meleeLifesteal',
+        short: 'LS',
+        label: 'Melee lifesteal',
+        description: 'Heal this much HP per Strike (1 point = 1 HP).',
+      },
+      {
+        key: 'strikeKnockback',
+        short: 'KB',
+        label: 'Strike knockback',
+        description: 'At ≥1: Strike pushes one tile if that cell is free.',
+      },
+      {
+        key: 'strikeSlow',
+        short: 'SLW',
+        label: 'Strike slow',
+        description: 'At ≥1: Strike applies slow; duration scales with points.',
+      },
+      {
+        key: 'strikeTempo',
+        short: 'TMP',
+        label: 'Strike tempo',
+        description: 'Bonus Strike damage per point if you moved ≤1 tile this turn.',
+      },
+      {
+        key: 'strikeRhythm',
+        short: 'RHY',
+        label: 'Strike rhythm',
+        description: 'Bonus on every 2nd consecutive Strike; move or magic breaks the chain.',
+      },
+    ],
+  },
+  {
+    title: 'Defense',
+    traits: [
       {
         key: 'vitality',
         short: 'VIT',
@@ -36,169 +92,105 @@ export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] =
         description: `+${HP_PER_VITALITY} max HP per point.`,
       },
       {
-        key: 'wisdom',
-        short: 'WIS',
-        label: 'Wisdom',
-        description: `+${MANA_PER_WISDOM} max mana per point beyond your level.`,
-      },
-      {
         key: 'regeneration',
         short: 'REG',
         label: 'Regeneration',
-        description: 'Heal this many HP at the start of each of your turns.',
+        description: 'Heal this much HP at the start of each of your turns.',
       },
       {
         key: 'tenacity',
         short: 'TEN',
         label: 'Tenacity',
-        description: 'Subtract this from each DoT tick you take (burn, poison, bleed).',
-      },
-      {
-        key: 'arcaneReach',
-        short: 'ARC',
-        label: 'Arcane reach',
-        description: '+1 base skill cast range per 2 points (see effective range on skills).',
-      },
-      {
-        key: 'spellFocus',
-        short: 'FOC',
-        label: 'Spell focus',
-        description:
-          'Bonus damage on your elemental skills after the target’s matching elemental defense (per hit).',
-      },
-      {
-        key: 'statusPotency',
-        short: 'STA',
-        label: 'Status potency',
-        description: 'Stronger DoTs, shock vulnerability, and status durations from skills you apply.',
-      },
-    ],
-  },
-  {
-    title: 'Melee',
-    traits: [
-      {
-        key: 'strength',
-        short: 'STR',
-        label: 'Strength',
-        description: 'Scales melee Strike base damage (before tempo, rhythm, and defender mitigations).',
-      },
-      {
-        key: 'bleedBonus',
-        short: 'BLD',
-        label: 'Bleed bonus',
-        description: 'Stronger bleeding DoT and duration from Strikes that apply bleed.',
-      },
-      {
-        key: 'meleeLifesteal',
-        short: 'LS',
-        label: 'Melee lifesteal',
-        description: 'Heal this much HP on each successful Strike (1 point = 1 HP).',
-      },
-      {
-        key: 'strikeKnockback',
-        short: 'KB',
-        label: 'Strike knockback',
-        description: 'If at least 1, Strike pushes the enemy one orthogonal tile when that cell is free.',
-      },
-      {
-        key: 'strikeSlow',
-        short: 'SLW',
-        label: 'Strike slow',
-        description: 'If at least 1, Strike applies slowed; duration scales with points.',
+        description: 'Subtract from each burn, poison, and bleed tick.',
       },
       {
         key: 'meleeDuelReduction',
         short: 'DRL',
         label: 'Melee duel reduction',
-        description:
-          'Flat damage reduction when an attacker in an adjacent cell hits you (before fortitude/armor).',
+        description: 'Less damage from adjacent attackers (before fortitude and armor).',
       },
       {
         key: 'fortitude',
         short: 'FOR',
         label: 'Fortitude',
-        description: 'Flat reduction to damage from enemy Strikes, after duel reduction.',
+        description: 'Less from Strikes and physical skills, after duel reduction.',
       },
       {
         key: 'physicalArmor',
         short: 'ARM',
         label: 'Physical armor',
-        description: 'Extra flat reduction vs Strikes and physical skills, after fortitude.',
+        description: 'Less after fortitude (Strikes and physical skills).',
       },
-      {
-        key: 'strikeTempo',
-        short: 'TMP',
-        label: 'Strike tempo',
-        description: 'Bonus Strike damage per point if you moved at most 1 tile this turn.',
-      },
-      {
-        key: 'strikeRhythm',
-        short: 'RHY',
-        label: 'Strike rhythm',
-        description:
-          'Bonus damage on every 2nd consecutive Strike in a chain (moving or casting breaks the chain).',
-      },
-    ],
-  },
-  {
-    title: 'Defenses',
-    traits: [
       {
         key: 'defenseFire',
         short: 'Fi',
         label: 'Fire',
-        description:
-          'Per point: reduce damage from Fire-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Fire'),
       },
       {
         key: 'defenseIce',
         short: 'Ic',
         label: 'Ice',
-        description:
-          'Per point: reduce damage from Ice-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Ice'),
       },
       {
         key: 'defenseWater',
         short: 'Wa',
         label: 'Water',
-        description:
-          'Per point: reduce damage from Water-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Water'),
       },
       {
         key: 'defenseElectric',
         short: 'El',
         label: 'Electric',
-        description:
-          'Per point: reduce damage from Electric-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Electric'),
       },
       {
         key: 'defensePoison',
         short: 'Po',
         label: 'Poison',
-        description:
-          'Per point: reduce damage from Poison-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Poison'),
       },
       {
         key: 'defenseWind',
         short: 'Wi',
         label: 'Wind',
-        description:
-          'Per point: reduce damage from Wind-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Wind'),
       },
       {
         key: 'defenseEarth',
         short: 'Ea',
         label: 'Earth',
-        description:
-          'Per point: reduce damage from Earth-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Earth'),
       },
       {
         key: 'defenseArcane',
         short: 'Ar',
         label: 'Arcane',
-        description:
-          'Per point: reduce damage from Arcane-element skills (not Strikes). Damage is still at least 1 after mitigation.',
+        description: resistVsSkills('Arcane'),
+      },
+    ],
+  },
+  {
+    title: 'Utility',
+    traits: [
+      {
+        key: 'agility',
+        short: 'AGI',
+        label: 'Agility',
+        description: '+1 move step per Move action; more max stamina.',
+      },
+      {
+        key: 'intelligence',
+        short: 'INT',
+        label: 'Intelligence',
+        description: '+1 mana at turn start per point (on top of +1/turn base).',
+      },
+      {
+        key: 'wisdom',
+        short: 'WIS',
+        label: 'Wisdom',
+        description: `+${MANA_PER_WISDOM} max mana per point beyond your level.`,
       },
     ],
   },

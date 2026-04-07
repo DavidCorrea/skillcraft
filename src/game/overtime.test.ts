@@ -60,8 +60,8 @@ describe('sudden death storm cadence', () => {
     resetIdsForTests()
     const base = duelBattleConfig({
       level: 8,
-      playerLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, manaDiscount: 0 }],
-      cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, manaDiscount: 0 }],
+      playerLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 }],
+      cpuLoadout: [{ skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 1, costDiscount: 0 }],
       playerTraits: defaultTraitPoints(),
       cpuTraits: defaultTraitPoints(),
     })

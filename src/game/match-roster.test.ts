@@ -80,7 +80,7 @@ describe('coerceFriendlyFire', () => {
     expect(coerceFriendlyFire(ms.roster)).toBe(true)
   })
 
-  it('is false when every team is solo (duel / FFA-style)', () => {
+  it('is true even when every team is solo (duel / FFA-style)', () => {
     const ms = buildCustomMatchSettings({
       humanLoadout: emptyLoadout,
       humanTraits: traits,
@@ -88,7 +88,7 @@ describe('coerceFriendlyFire', () => {
       teamIds: [0, 1],
       defaultCpuDifficulty: 'normal',
     })
-    expect(coerceFriendlyFire(ms.roster)).toBe(false)
+    expect(coerceFriendlyFire(ms.roster)).toBe(true)
   })
 })
 
