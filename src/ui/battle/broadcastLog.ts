@@ -417,7 +417,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         d.targetMaxHp && d.targetHpAfter !== undefined && d.targetMaxHp > 0
           ? d.targetHpAfter / d.targetMaxHp
           : 1
-      let strikePool = CASTER_STRIKE
+      let strikePool: readonly string[] = CASTER_STRIKE
       if (d.killed) strikePool = CASTER_STRIKE_KILL
       else if (!d.killed && ratio <= 0.25) strikePool = CASTER_STRIKE_LOW
       rows.push({
@@ -569,7 +569,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
       const name = displayName(game, d.actorId)
       const skill = d.skillId.replace(/_/g, ' ')
       const snaps = d.hitSnapshots
-      let castPool = CASTER_CAST_DMG
+      let castPool: readonly string[] = CASTER_CAST_DMG
       if (snaps?.some((s) => s.maxHp > 0 && s.hpAfter <= 0)) castPool = CASTER_CAST_DMG_KILL
       else if (snaps?.some((s) => s.maxHp > 0 && s.hpAfter / s.maxHp <= 0.25)) castPool = CASTER_CAST_DMG_LOW
       rows.push({
@@ -603,7 +603,7 @@ function expandDetail(d: BattleLogDetail, entry: BattleLogEntry, game: GameState
         d.victimMaxHp && d.victimHpAfter !== undefined && d.victimMaxHp > 0
           ? d.victimHpAfter / d.victimMaxHp
           : 1
-      let resPool = CASTER_RESIDUAL
+      let resPool: readonly string[] = CASTER_RESIDUAL
       if (d.killed) resPool = CASTER_RESIDUAL_KILL
       else if (!d.killed && ratio <= 0.25) resPool = CASTER_RESIDUAL_LOW
       rows.push({

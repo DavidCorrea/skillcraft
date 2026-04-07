@@ -16,6 +16,7 @@ const STATUS_LABEL: Record<StatusInstance['tag']['t'], string> = {
   marked: 'marked',
   rooted: 'rooted',
   silenced: 'silenced',
+  disarmed: 'disarmed',
   regenBlocked: 'regen blocked',
   muddy: 'muddy',
   shield: 'shield',

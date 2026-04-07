@@ -72,6 +72,11 @@ export const REACTION_CASTER_LINES: Record<StatusReactionKey, readonly string[]>
     '{name}: shock climbs while rooted — grounded.',
     'Pinned body on {name} conducts worse — grounded.',
   ],
+  groundGrip: [
+    'Ground grip — shock wrenches {name}\'s grip; weapon tempo breaks.',
+    '{name} loses the swing — ground grip from shock on the pin.',
+    'Lightning locks {name}\'s hands — ground grip, strike denied.',
+  ],
   crystallize: [
     'Crystallize — venom locks in the cold on {name}.',
     '{name}: ice strips, poison extends — crystallize.',
@@ -190,6 +195,11 @@ export const REACTION_CPU_LINES: Record<StatusReactionKey, readonly string[]> = 
     'Pinned — lightning hurts more.',
     'Grounding out — shock stacks.',
     'Shock stacks — rooted.',
+  ],
+  groundGrip: [
+    'Weapon slipped — shock ripped my tempo.',
+    'Hands locked — ground grip.',
+    'Disarmed rhythm — shock on the root.',
   ],
   crystallize: [
     'Crystallizing — venom in the frost.',

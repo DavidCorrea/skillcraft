@@ -98,6 +98,7 @@ describe('effectiveCastRangeForLoadout', () => {
       skillId: 'ember',
       pattern: [{ dx: 0, dy: 0 }],
       statusStacks: 1,
+      costDiscount: 0,
       rangeTier: 0,
     }
     expect(effectiveCastRangeForLoadout(def, entry, defaultTraitPoints())).toBe(1)
@@ -116,6 +117,7 @@ describe('effectiveCastRangeForLoadout', () => {
       skillId: 'ember',
       pattern: [{ dx: 0, dy: 0 }],
       statusStacks: 1,
+      costDiscount: 0,
       rangeTier: 0,
     }
     expect(minCastManhattanForLoadout(def, entry)).toBe(1)
@@ -130,6 +132,7 @@ describe('effectiveCastRangeForLoadout', () => {
       skillId: 'mend',
       pattern: [{ dx: 0, dy: 0 }],
       statusStacks: 1,
+      costDiscount: 0,
       rangeTier: 0,
     }
     expect(minCastManhattanForLoadout(def, entry)).toBe(0)

@@ -9,7 +9,6 @@ import {
   MANA_PER_WISDOM,
   maxStaminaForTraits,
   physicalOffenseDamagePerHit,
-  STRIKE_BASE_DAMAGE,
   STAMINA_BASE_MAX,
   STAMINA_MAX_PER_AGILITY,
   STAMINA_REGEN_PER_TURN,

@@ -47,6 +47,8 @@ export function formatStatusLine(s: StatusInstance): string {
       return `Rooted — ${t.duration} turn${t.duration === 1 ? '' : 's'}`
     case 'silenced':
       return `Silenced — ${t.duration} turn${t.duration === 1 ? '' : 's'}`
+    case 'disarmed':
+      return `Disarmed — ${t.duration} turn${t.duration === 1 ? '' : 's'}`
     case 'regenBlocked':
       return `Regen blocked — ${t.duration} turn${t.duration === 1 ? '' : 's'}`
     case 'muddy':

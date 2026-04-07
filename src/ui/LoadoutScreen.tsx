@@ -170,7 +170,7 @@ function migrateTraitPoints(input: unknown): TraitPoints {
   for (const key of Object.keys(t) as (keyof TraitPoints)[]) {
     const v = o[key as string]
     if (typeof v === 'number' && Number.isFinite(v)) {
-      ;(t as Record<string, number>)[key] = Math.max(0, Math.floor(v))
+      ;(t as unknown as Record<string, number>)[key] = Math.max(0, Math.floor(v))
     }
   }
   if (!('physicalTempo' in o) && typeof o.strikeTempo === 'number' && Number.isFinite(o.strikeTempo)) {

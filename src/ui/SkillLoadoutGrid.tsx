@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { BOARD_SIZE, coordKey, inBounds, manhattan } from '../game/board'
 import {
   cellsForPattern,
@@ -230,7 +230,7 @@ export function SkillLoadoutGrid({
 
   const wrapClass = 'skill-cast-planner skill-cast-planner--compact skill-loadout-grid skill-loadout-grid--compact'
 
-  function renderBoardButton(bc: Coord, keySuffix: string): JSX.Element {
+  function renderBoardButton(bc: Coord, keySuffix: string): ReactElement {
     const k = keySuffix
     const isYou = bc.x === you.x && bc.y === you.y
     const dYou = manhattan(you, bc)
