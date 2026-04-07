@@ -1,4 +1,4 @@
-import type { SkillId, SkillLoadoutEntry, TraitPoints } from './types'
+import type { PatternOffset, SkillId, SkillLoadoutEntry, TraitPoints } from './types'
 import { defaultTraitPoints } from './traits'
 import {
   fitPlayerBudgetToLevel,
@@ -22,7 +22,16 @@ export function formatPresetLabel(p: Pick<PresetPlayerBuild, 'level' | 'name'>):
 
 const ALL_TRAIT_KEYS = Object.keys(defaultTraitPoints()) as (keyof TraitPoints)[]
 
-type MinEntryOpts = { rangeTier?: number; aoeTier?: number }
+type MinEntryOpts = {
+  rangeTier?: number
+  aoeTier?: number
+  /** Lowers cast resource cost in battle (capped by {@link validateLoadout}). */
+  costDiscount?: number
+  /** Status intensity; ≥2 unlocks threshold effects on some skills (e.g. frost bolt). */
+  statusStacks?: number
+  /** Defaults to a single anchor cell; duplicates = multi-hit on the same cell. */
+  pattern?: PatternOffset[]
+}
 
 /**
  * Minimum-cost skill row. Most presets pass {@link MinEntryOpts} so offensive skills can open at range.
@@ -31,11 +40,14 @@ type MinEntryOpts = { rangeTier?: number; aoeTier?: number }
 function minEntry(skillId: SkillId, opts?: MinEntryOpts): SkillLoadoutEntry {
   const rt = Math.max(0, Math.floor(opts?.rangeTier ?? 0))
   const at = Math.max(0, Math.floor(opts?.aoeTier ?? 0))
+  const stacks = Math.max(1, Math.floor(opts?.statusStacks ?? 1))
+  const discount = Math.max(0, Math.floor(opts?.costDiscount ?? 0))
+  const pattern = opts?.pattern ?? ([{ dx: 0, dy: 0 }] satisfies PatternOffset[])
   return {
     skillId,
-    pattern: [{ dx: 0, dy: 0 }],
-    statusStacks: 1,
-    costDiscount: 0,
+    pattern,
+    statusStacks: stacks,
+    costDiscount: discount,
     rangeTier: rt,
     aoeTier: at,
   }
@@ -244,9 +256,11 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
 
   finalize('lv5-cinder-twin', 'Cinder twin', 5, [minEntry('ember', { rangeTier: 1 }), minEntry('frost_bolt')], PRI_CASTER),
   finalize('lv5-frost-flint', 'Frost flint', 5, [minEntry('frost_bolt', { rangeTier: 1 }), minEntry('splinter')], PRI_MELEE),
+  finalize('lv5-street-scrap', 'Street scrap', 5, [minEntry('strike'), minEntry('splinter')], PRI_MELEE),
 
   finalize('lv8-tide-trial', 'Tide trial', 8, [minEntry('tide_touch', { rangeTier: 1 }), minEntry('spark', { rangeTier: 1 })], PRI_CASTER),
   finalize('lv8-bruiser-pair', 'Bruiser pair', 8, [minEntry('splinter'), minEntry('tremor')], PRI_MELEE),
+  finalize('lv8-field-medic', 'Field medic', 8, [minEntry('mend'), minEntry('ward')], PRI_SUPPORT),
 
   finalize('lv9-triad-core', 'Triad core', 9, [
     minEntry('ember', { rangeTier: 1 }),
@@ -259,11 +273,14 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
     minEntry('arcane_pulse', { rangeTier: 1 }),
   ], PRI_CASTER),
 
+  finalize('lv10-bull-rush', 'Bull rush', 10, [minEntry('strike'), minEntry('shove'), minEntry('splinter')], PRI_MELEE),
+
   finalize('lv12-quarter-arc', 'Quarter arc', 12, [
     minEntry('ember', { rangeTier: 1 }),
     minEntry('frost_bolt', { rangeTier: 1 }),
     minEntry('zephyr_cut', { rangeTier: 1 }),
   ], PRI_SKIRMISH),
+  finalize('lv12-triage', 'Triage', 12, [minEntry('mend'), minEntry('ward'), minEntry('purge')], PRI_SUPPORT),
 
   finalize(
     'lv13-quad-weave',
@@ -289,6 +306,24 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
     ],
     PRI_DOT,
   ),
+  finalize(
+    'lv15-wedge-cut',
+    'Wedge cut',
+    15,
+    [
+      minEntry('strike'),
+      minEntry('splinter'),
+      minEntry('hamstring'),
+      minEntry('cleave', {
+        aoeTier: 1,
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 1, dy: 0 },
+        ],
+      }),
+    ],
+    PRI_MELEE,
+  ),
 
   finalize(
     'lv16-fourfold',
@@ -301,6 +336,13 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
       minEntry('zephyr_cut', { rangeTier: 1 }),
     ],
     PRI_CASTER,
+  ),
+  finalize(
+    'lv16-aegis-net',
+    'Aegis net',
+    16,
+    [minEntry('mend'), minEntry('ward'), minEntry('purge'), minEntry('immunize')],
+    PRI_SUPPORT,
   ),
 
   finalize(
@@ -362,6 +404,13 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
     ],
     PRI_DOT,
   ),
+  finalize(
+    'lv20-ward-line',
+    'Ward line',
+    20,
+    [minEntry('mend'), minEntry('ward'), minEntry('purge'), minEntry('immunize'), minEntry('focus')],
+    PRI_SUPPORT,
+  ),
 
   finalize(
     'lv21-grid-step',
@@ -388,6 +437,40 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
       minEntry('tide_touch', { rangeTier: 1 }),
     ],
     PRI_SKIRMISH,
+  ),
+  finalize(
+    'lv22-meat-grinder',
+    'Meat grinder',
+    22,
+    [
+      minEntry('strike'),
+      minEntry('splinter'),
+      minEntry('cleave', {
+        aoeTier: 1,
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 1, dy: 0 },
+        ],
+      }),
+      minEntry('shove'),
+      minEntry('hamstring'),
+      minEntry('rend'),
+    ],
+    PRI_MELEE,
+  ),
+  finalize(
+    'lv23-vitals-desk',
+    'Vitals desk',
+    23,
+    [
+      minEntry('mend'),
+      minEntry('ward'),
+      minEntry('purge'),
+      minEntry('immunize'),
+      minEntry('focus'),
+      minEntry('overclock'),
+    ],
+    PRI_SUPPORT,
   ),
 
   finalize(
@@ -429,6 +512,22 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
       minEntry('spark', { rangeTier: 1 }),
     ],
     PRI_DOT,
+  ),
+
+  finalize(
+    'lv28-full-utility',
+    'Full utility',
+    28,
+    [
+      minEntry('mend'),
+      minEntry('ward'),
+      minEntry('purge'),
+      minEntry('immunize'),
+      minEntry('focus'),
+      minEntry('overclock'),
+      minEntry('wardbreak'),
+    ],
+    PRI_SUPPORT,
   ),
 
   finalize(
@@ -514,6 +613,28 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
   ),
 
   finalize(
+    'lv40-enforcer',
+    'Enforcer',
+    40,
+    [
+      minEntry('strike'),
+      minEntry('splinter'),
+      minEntry('cleave', {
+        aoeTier: 1,
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 1, dy: 0 },
+        ],
+      }),
+      minEntry('shove'),
+      minEntry('hamstring'),
+      minEntry('rend'),
+      minEntry('tremor', { rangeTier: 1 }),
+    ],
+    PRI_MELEE,
+  ),
+
+  finalize(
     'lv42-edge-forty',
     'Edge forty',
     42,
@@ -546,6 +667,21 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
     45,
     [minEntry('tide_touch', { rangeTier: 1 }), minEntry('tremor'), minEntry('wardbreak'), minEntry('ward'), minEntry('mend')],
     PRI_TANK,
+  ),
+  finalize(
+    'lv45-full-support',
+    'Full support',
+    45,
+    [
+      minEntry('mend'),
+      minEntry('ward'),
+      minEntry('purge'),
+      minEntry('immunize'),
+      minEntry('focus'),
+      minEntry('overclock'),
+      minEntry('wardbreak'),
+    ],
+    PRI_SUPPORT,
   ),
 
   finalize(
@@ -623,6 +759,21 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
     65,
     [minEntry('wardbreak'), minEntry('tremor'), minEntry('ward'), minEntry('purge'), minEntry('mend')],
     PRI_TANK,
+  ),
+  finalize(
+    'lv70-full-support',
+    'Full support',
+    70,
+    [
+      minEntry('mend'),
+      minEntry('ward'),
+      minEntry('purge'),
+      minEntry('immunize'),
+      minEntry('focus'),
+      minEntry('overclock'),
+      minEntry('wardbreak'),
+    ],
+    PRI_SUPPORT,
   ),
 
   finalize(
@@ -858,5 +1009,106 @@ export const PRESET_PLAYER_BUILDS: PresetPlayerBuild[] = [
       minEntry('spark', { rangeTier: 1 }),
     ],
     PRI_BALANCED,
+  ),
+
+  /** Every adjacent physical offense skill plus splinter; team brawler identity. */
+  finalize(
+    'lv99-brutalist',
+    'Brutalist',
+    99,
+    [
+      minEntry('strike'),
+      minEntry('splinter'),
+      minEntry('cleave', {
+        aoeTier: 1,
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 1, dy: 0 },
+        ],
+      }),
+      minEntry('shove'),
+      minEntry('hamstring'),
+      minEntry('rend'),
+      minEntry('tremor', { rangeTier: 1 }),
+    ],
+    PRI_MELEE,
+  ),
+
+  /**
+   * Showcases loadout tuning: AoE tier, cost discount, multi-cell pattern, stack thresholds,
+   * and double-tap pattern on magic.
+   */
+  finalize(
+    'lv99-tuning-board',
+    'Tuning board',
+    99,
+    [
+      minEntry('strike'),
+      minEntry('ember', {
+        rangeTier: 1,
+        costDiscount: 1,
+        pattern: [
+          { dx: 0, dy: 0 },
+          { dx: 0, dy: 0 },
+        ],
+      }),
+      minEntry('frost_bolt', { rangeTier: 1, statusStacks: 2 }),
+      minEntry('caustic_cloud', { rangeTier: 1, aoeTier: 1 }),
+      minEntry('spark', { rangeTier: 1 }),
+      minEntry('tide_touch', { rangeTier: 1 }),
+      minEntry('mend'),
+    ],
+    PRI_BALANCED,
+  ),
+
+  /** Full utility roster — default tuning; maximum trait budget at LV 99. */
+  finalize(
+    'lv99-utility-suite',
+    'Utility suite',
+    99,
+    [
+      minEntry('mend'),
+      minEntry('ward'),
+      minEntry('purge'),
+      minEntry('immunize'),
+      minEntry('focus'),
+      minEntry('overclock'),
+      minEntry('wardbreak'),
+    ],
+    PRI_SUPPORT,
+  ),
+
+  /** All seven utilities at cast range tier 1 (pairs with Arcane reach for magic utilities). */
+  finalize(
+    'lv99-utility-reach',
+    'Utility reach',
+    99,
+    [
+      minEntry('mend', { rangeTier: 1 }),
+      minEntry('ward', { rangeTier: 1 }),
+      minEntry('purge', { rangeTier: 1 }),
+      minEntry('immunize', { rangeTier: 1 }),
+      minEntry('focus', { rangeTier: 1 }),
+      minEntry('overclock', { rangeTier: 1 }),
+      minEntry('wardbreak', { rangeTier: 1 }),
+    ],
+    PRI_SUPPORT,
+  ),
+
+  /** Heavy stacks on heals, shields, cleanse, and wardstrip; cheap Overclock rip. */
+  finalize(
+    'lv99-utility-bulwark',
+    'Utility bulwark',
+    99,
+    [
+      minEntry('mend', { statusStacks: 2 }),
+      minEntry('ward', { statusStacks: 2 }),
+      minEntry('purge', { statusStacks: 2 }),
+      minEntry('immunize', { statusStacks: 2 }),
+      minEntry('focus', { statusStacks: 2 }),
+      minEntry('overclock', { rangeTier: 1, costDiscount: 1 }),
+      minEntry('wardbreak', { rangeTier: 1 }),
+    ],
+    PRI_SUPPORT,
   ),
 ]
