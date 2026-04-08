@@ -1,6 +1,12 @@
 import type { GameAction } from '../game/engine'
 import { applyAction, allLegalActions, gatherOffensiveHits } from '../game/engine'
 import { cpuActionHistoryKey, hashCpuSearchPosition } from './cpuPositionHash'
+import {
+  CPU_SEARCH_TT_MAX_ENTRIES,
+  CPU_SEARCH_TT_TRIM_TO,
+  cpuSearchDeadlineMs,
+  cpuSearchMaxNodes,
+} from './cpuThinkBudget'
 import type { ActorId, ActorState, CpuDifficulty, GameState } from '../game/types'
 import { coordKey, isOpponentActor, manhattan } from '../game/board'
 import { currentOvertimeDamageAmount, isOvertimeLethal } from '../game/overtime'
@@ -38,20 +44,59 @@ function ttCompositeKey(positionHash: bigint, depth: number): bigint {
   return (positionHash ^ (BigInt(depth) * 1000003n)) & ((1n << 64n) - 1n)
 }
 
+type SearchBudget = {
+  deadline: number
+  maxNodes: number
+  nodeCount: number
+  exhausted: boolean
+}
+
 type SearchTables = {
   tt: Map<bigint, TtEntry>
   history: Map<string, number>
   killer0: Map<number, GameAction>
   killer1: Map<number, GameAction>
+  budget: SearchBudget | null
 }
 
-function createSearchTables(): SearchTables {
+function createSearchTables(diff: CpuDifficulty): SearchTables {
   return {
     tt: new Map(),
     history: new Map(),
     killer0: new Map(),
     killer1: new Map(),
+    budget:
+      diff === 'easy'
+        ? null
+        : {
+            deadline: cpuSearchDeadlineMs(diff),
+            maxNodes: cpuSearchMaxNodes(diff),
+            nodeCount: 0,
+            exhausted: false,
+          },
   }
+}
+
+/** One search node (TT miss path). Returns true if the budget is exhausted after counting. */
+function searchBudgetConsumeNode(tables: SearchTables): boolean {
+  const b = tables.budget
+  if (!b) return false
+  if (b.exhausted) return true
+  b.nodeCount++
+  if (b.nodeCount >= b.maxNodes) {
+    b.exhausted = true
+    return true
+  }
+  if ((b.nodeCount & 63) === 0 && Date.now() >= b.deadline) {
+    b.exhausted = true
+    return true
+  }
+  return false
+}
+
+/** Scout windows break when alpha/beta are non-finite (JS: -Infinity + 1 is still -Infinity). */
+function canPrincipalVariationScout(alpha: number, beta: number): boolean {
+  return Number.isFinite(alpha) && Number.isFinite(beta) && beta > alpha + 1
 }
 
 function ttProbe(tables: SearchTables, key: bigint, alpha: number, beta: number): number | null {
@@ -70,6 +115,15 @@ function ttStore(tables: SearchTables, key: bigint, value: number, alpha: number
   else flag = 'exact'
 
   tables.tt.set(key, { score: value, flag })
+
+  if (tables.tt.size > CPU_SEARCH_TT_MAX_ENTRIES) {
+    let removed = 0
+    const needRemove = tables.tt.size - CPU_SEARCH_TT_TRIM_TO
+    for (const k of tables.tt.keys()) {
+      tables.tt.delete(k)
+      if (++removed >= needRemove) break
+    }
+  }
 }
 
 function gameActionsEqual(a: GameAction, b: GameAction): boolean {
@@ -101,22 +155,37 @@ function bumpHistory(tables: SearchTables, actor: ActorId, action: GameAction, d
   tables.history.set(k, (tables.history.get(k) ?? 0) + depth * depth)
 }
 
+/**
+ * 1v1 minimax depth (full plies from root). +1 per tier so difficulty ramps evenly without
+ * the old Normal→Hard→Nightmare jumps (4→6→8) that exploded node count on nightmare.
+ */
 function searchPliesForDifficulty(d: CpuDifficulty): number {
   if (d === 'easy') return 2
-  /** Above Hard (6); keep bounded so duel turns stay responsive in the browser. */
-  if (d === 'nightmare') return 8
-  if (d === 'hard') return 6
-  return 4
+  if (d === 'nightmare') return 6
+  if (d === 'hard') return 5
+  return 3
+}
+
+function livingFighterCount(state: GameState): number {
+  let n = 0
+  for (const id of state.turnOrder) {
+    if (state.actors[id]!.hp > 0) n++
+  }
+  return n
 }
 
 /**
  * Paranoid search depth for 3+ fighters (team vs everyone else).
- * Kept below duel depth — branching is much higher (casts/moves × actors).
+ * Base depth is below duel depth — branching is much higher (casts/moves × actors).
+ * When many fighters are still alive, depth is trimmed so turns stay responsive.
  */
-function searchPliesMulti(d: CpuDifficulty): number {
-  if (d === 'nightmare') return 5
-  if (d === 'hard') return 4
-  return 3
+function searchPliesMulti(d: CpuDifficulty, fightersAlive: number): number {
+  let base: number
+  if (d === 'nightmare') base = 5
+  else if (d === 'hard') base = 4
+  else base = 3
+  const extra = Math.max(0, fightersAlive - 3)
+  return Math.max(2, base - Math.min(2, Math.floor(extra / 2)))
 }
 
 function sameTeam(state: GameState, a: ActorId, b: ActorId): boolean {
@@ -201,61 +270,104 @@ export function pickCpuAction(state: GameState, actorId: ActorId): GameAction {
     return pickCpuGreedy(state, actorId, diff)
   }
 
-  const tables = createSearchTables()
+  const tables = createSearchTables(diff)
 
-  const jitter =
+  /** Per-root tie noise so equal minimax scores still pick a side; scales down on higher tiers. */
+  const tieNoise =
     diff === 'nightmare'
-      ? Math.random() * 0.001
+      ? () => Math.random() * 0.02
       : diff === 'hard'
-        ? Math.random() * 0.008
-        : Math.random() * 0.015
+        ? () => Math.random() * 0.06
+        : () => Math.random() * 0.12
 
   if (state.turnOrder.length === 2) {
     const plies = searchPliesForDifficulty(diff)
-    const ordered = orderedActions(state, actorId, plies - 1, tables)
-    let best: GameAction = ordered[0]!
-    let bestScore = -Infinity
+    const maxDepth = plies - 1
     const other = otherInDuel(state, actorId)
+    let rootCandidates = orderedActions(state, actorId, maxDepth, tables)
+    let lastRanked: { action: GameAction; score: number }[] = []
 
-    for (const action of ordered) {
+    for (let depthLimit = 1; depthLimit <= maxDepth; depthLimit++) {
+      if (tables.budget?.exhausted) break
+      const ranked: { action: GameAction; score: number }[] = []
+      let completedIteration = true
+      for (const action of rootCandidates) {
+        if (tables.budget?.exhausted) {
+          completedIteration = false
+          break
+        }
+        const res = applyAction(state, actorId, action)
+        if (res.error) continue
+        const next = res.state
+        if (next.winner === other) continue
+
+        const score = minimax(next, depthLimit, -Infinity, Infinity, actorId, other, tables)
+        ranked.push({ action, score })
+      }
+      if (!completedIteration) break
+      if (ranked.length === 0) {
+        return rootCandidates[0]!
+      }
+      ranked.sort((a, b) => b.score - a.score)
+      lastRanked = ranked
+      rootCandidates = ranked.map((r) => r.action)
+    }
+
+    if (lastRanked.length === 0) {
+      return rootCandidates[0]!
+    }
+    const finalRanked = lastRanked.map((r) => ({ ...r, score: r.score + tieNoise() }))
+    finalRanked.sort((a, b) => b.score - a.score)
+    if (diff === 'normal' && finalRanked.length >= 2 && Math.random() < 0.14) {
+      return finalRanked[1]!.action
+    }
+    return finalRanked[0]!.action
+  }
+
+  const pliesMulti = searchPliesMulti(diff, livingFighterCount(state))
+  const maxMulti = pliesMulti - 1
+  let rootMulti = orderedActions(state, actorId, maxMulti, tables)
+  let lastRankedM: { action: GameAction; score: number }[] = []
+
+  for (let depthLimit = 1; depthLimit <= maxMulti; depthLimit++) {
+    if (tables.budget?.exhausted) break
+    const rankedM: { action: GameAction; score: number }[] = []
+    let completedMulti = true
+    for (const action of rootMulti) {
+      if (tables.budget?.exhausted) {
+        completedMulti = false
+        break
+      }
       const res = applyAction(state, actorId, action)
       if (res.error) continue
       const next = res.state
-      if (next.winner === other) continue
+      const term = winningSideScore(next, actorId)
+      if (term === LOSS_SCORE) continue
 
-      const score = minimax(next, plies - 1, -Infinity, Infinity, actorId, other, tables)
-      if (score + jitter > bestScore) {
-        bestScore = score + jitter
-        best = action
-      }
+      const score =
+        term === WIN_SCORE
+          ? WIN_SCORE
+          : paranoidSearch(next, depthLimit, -Infinity, Infinity, actorId, tables)
+      rankedM.push({ action, score })
     }
-
-    return best
+    if (!completedMulti) break
+    if (rankedM.length === 0) {
+      return rootMulti[0]!
+    }
+    rankedM.sort((a, b) => b.score - a.score)
+    lastRankedM = rankedM
+    rootMulti = rankedM.map((r) => r.action)
   }
 
-  const pliesMulti = searchPliesMulti(diff)
-  const orderedMulti = orderedActions(state, actorId, pliesMulti - 1, tables)
-  let bestM: GameAction = orderedMulti[0]!
-  let bestScoreM = -Infinity
-
-  for (const action of orderedMulti) {
-    const res = applyAction(state, actorId, action)
-    if (res.error) continue
-    const next = res.state
-    const term = winningSideScore(next, actorId)
-    if (term === LOSS_SCORE) continue
-
-    const score =
-      term === WIN_SCORE
-        ? WIN_SCORE
-        : paranoidSearch(next, pliesMulti - 1, -Infinity, Infinity, actorId, tables)
-    if (score + jitter > bestScoreM) {
-      bestScoreM = score + jitter
-      bestM = action
-    }
+  if (lastRankedM.length === 0) {
+    return rootMulti[0]!
   }
-
-  return bestM
+  const finalM = lastRankedM.map((r) => ({ ...r, score: r.score + tieNoise() }))
+  finalM.sort((a, b) => b.score - a.score)
+  if (diff === 'normal' && finalM.length >= 2 && Math.random() < 0.14) {
+    return finalM[1]!.action
+  }
+  return finalM[0]!.action
 }
 
 function pickCpuGreedy(state: GameState, actorId: ActorId, diff: CpuDifficulty): GameAction {
@@ -294,6 +406,10 @@ function paranoidSearch(
   const probed = ttProbe(tables, key, alpha, beta)
   if (probed !== null) return probed
 
+  if (searchBudgetConsumeNode(tables)) {
+    return evaluateStaticMulti(state, perspectiveId)
+  }
+
   if (depth === 0) {
     const v = evaluateStaticMulti(state, perspectiveId)
     ttStore(tables, key, v, alphaOrig, betaOrig)
@@ -312,6 +428,7 @@ function paranoidSearch(
 
   if (maximizing) {
     let value = -Infinity
+    let firstChild = true
     for (const action of actions) {
       const res = applyAction(state, actor, action)
       if (res.error) continue
@@ -320,8 +437,18 @@ function paranoidSearch(
         ttStore(tables, key, WIN_SCORE, alphaOrig, betaOrig)
         return WIN_SCORE
       }
-      const child =
-        t === LOSS_SCORE ? LOSS_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+      let child: number
+      if (t === LOSS_SCORE) {
+        child = LOSS_SCORE
+      } else if (firstChild || !canPrincipalVariationScout(alpha, beta)) {
+        child = paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+      } else {
+        child = paranoidSearch(res.state, depth - 1, alpha, alpha + 1, perspectiveId, tables)
+        if (child > alpha && child < beta) {
+          child = paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+        }
+      }
+      firstChild = false
       value = Math.max(value, child)
       if (value > beta) {
         recordKiller(tables, depth, action)
@@ -337,6 +464,7 @@ function paranoidSearch(
   }
 
   let value = Infinity
+  let firstChildMin = true
   for (const action of actions) {
     const res = applyAction(state, actor, action)
     if (res.error) continue
@@ -345,8 +473,18 @@ function paranoidSearch(
       ttStore(tables, key, LOSS_SCORE, alphaOrig, betaOrig)
       return LOSS_SCORE
     }
-    const child =
-      t === WIN_SCORE ? WIN_SCORE : paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+    let child: number
+    if (t === WIN_SCORE) {
+      child = WIN_SCORE
+    } else if (firstChildMin || !canPrincipalVariationScout(alpha, beta)) {
+      child = paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+    } else {
+      child = paranoidSearch(res.state, depth - 1, beta - 1, beta, perspectiveId, tables)
+      if (child > alpha && child < beta) {
+        child = paranoidSearch(res.state, depth - 1, alpha, beta, perspectiveId, tables)
+      }
+    }
+    firstChildMin = false
     value = Math.min(value, child)
     if (value < alpha) {
       recordKiller(tables, depth, action)
@@ -394,6 +532,10 @@ function minimax(
   const probed = ttProbe(tables, key, alpha, beta)
   if (probed !== null) return probed
 
+  if (searchBudgetConsumeNode(tables)) {
+    return evaluateStaticDuel(state, perspectiveId, opponentId)
+  }
+
   if (depth === 0) {
     const v = evaluateStaticDuel(state, perspectiveId, opponentId)
     ttStore(tables, key, v, alphaOrig, betaOrig)
@@ -412,6 +554,7 @@ function minimax(
 
   if (isMax) {
     let value = -Infinity
+    let firstChild = true
     for (const action of actions) {
       const res = applyAction(state, actor, action)
       if (res.error) continue
@@ -419,7 +562,16 @@ function minimax(
         ttStore(tables, key, WIN_SCORE, alphaOrig, betaOrig)
         return WIN_SCORE
       }
-      const child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+      let child: number
+      if (firstChild || !canPrincipalVariationScout(alpha, beta)) {
+        child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+      } else {
+        child = minimax(res.state, depth - 1, alpha, alpha + 1, perspectiveId, opponentId, tables)
+        if (child > alpha && child < beta) {
+          child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+        }
+      }
+      firstChild = false
       value = Math.max(value, child)
       if (value > beta) {
         recordKiller(tables, depth, action)
@@ -435,6 +587,7 @@ function minimax(
   }
 
   let value = Infinity
+  let firstChildMin = true
   for (const action of actions) {
     const res = applyAction(state, actor, action)
     if (res.error) continue
@@ -442,7 +595,16 @@ function minimax(
       ttStore(tables, key, LOSS_SCORE, alphaOrig, betaOrig)
       return LOSS_SCORE
     }
-    const child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+    let child: number
+    if (firstChildMin || !canPrincipalVariationScout(alpha, beta)) {
+      child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+    } else {
+      child = minimax(res.state, depth - 1, beta - 1, beta, perspectiveId, opponentId, tables)
+      if (child > alpha && child < beta) {
+        child = minimax(res.state, depth - 1, alpha, beta, perspectiveId, opponentId, tables)
+      }
+    }
+    firstChildMin = false
     value = Math.min(value, child)
     if (value < alpha) {
       recordKiller(tables, depth, action)

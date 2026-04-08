@@ -1,26 +1,25 @@
-import { CPU_THINK_TIMEOUT_MS } from '../../ai/cpuThinkBudget'
+import { useEffect, useState } from 'react'
+import { CPU_THINK_TIMEOUT_MS, cpuThinkRemainingRatio } from '../../ai/cpuThinkBudget'
 
 const R = 10
 const CIRC = 2 * Math.PI * R
 
-/** Remaining fraction of the think budget in [0, 1]. */
-export function cpuThinkRemainingRatio(deadlineMs: number, nowMs: number, totalMs: number): number {
-  if (totalMs <= 0) return 0
-  return Math.max(0, Math.min(1, (deadlineMs - nowMs) / totalMs))
-}
-
 export function CpuThinkRing({
   deadlineMs,
-  nowMs,
   totalMs = CPU_THINK_TIMEOUT_MS,
   label,
 }: {
   deadlineMs: number
-  nowMs: number
   totalMs?: number
   /** Accessible name, e.g. "CPU 1 deciding" */
   label: string
 }) {
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 100)
+    return () => window.clearInterval(id)
+  }, [deadlineMs])
+
   const remaining = cpuThinkRemainingRatio(deadlineMs, nowMs, totalMs)
   const offset = CIRC * (1 - remaining)
   const secLeft = Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000))

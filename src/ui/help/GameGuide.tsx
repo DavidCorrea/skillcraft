@@ -159,17 +159,17 @@ export function GameGuide({ contextContent }: { contextContent: ReactNode }) {
                 </p>
                 <p className="ls-modal__note">
                   <span className="ls-modal__lead">Actions.</span> <strong>Move</strong> (orthogonal steps, stamina),{' '}
-                  <strong>Strike</strong> adjacent hostiles, <strong>cast</strong> from your loadout (mana), or{' '}
-                  <strong>Skip</strong> to end your turn.
+                  <strong>cast</strong> skills from your loadout (<strong>mana</strong> for elemental magic,{' '}
+                  <strong>stamina</strong> for physical skills), or <strong>Skip</strong> to end your turn.
                 </p>
                 <p className="ls-modal__note">
-                  <span className="ls-modal__lead">Resources.</span> <strong>Mana</strong> refills each turn (casts).{' '}
-                  <strong>Stamina</strong> refills each turn (move and Strike).
+                  <span className="ls-modal__lead">Resources.</span> <strong>Mana</strong> refills each turn (elemental
+                  casts). <strong>Stamina</strong> refills each turn (move and physical skills).
                 </p>
                 <p className="ls-modal__note ls-modal__note--tight">
                   <span className="ls-modal__lead">Targeting.</span> In team modes, same team = allies; in FFA everyone
-                  else is an enemy. <strong>Skills, Strikes, and residual tiles</strong> can hit anyone on affected
-                  cells—including allies and you.
+                  else is an enemy. <strong>Skills and residual tiles</strong> can hit anyone on affected cells—including
+                  allies and you.
                 </p>
               </section>
 
@@ -190,8 +190,8 @@ export function GameGuide({ contextContent }: { contextContent: ReactNode }) {
                 <h3 className="ls-modal__h">First battles</h3>
                 <ol className="ls-modal__guide-list">
                   <li>
-                    <strong>Stamina budget.</strong> Moving and Striking share stamina—don&apos;t strand yourself out of
-                    range with an empty bar.
+                    <strong>Stamina budget.</strong> Moving and physical skills share stamina—don&apos;t strand yourself
+                    out of range with an empty bar.
                   </li>
                   <li>
                     <strong>First cast.</strong> Click the anchor tile; range is measured from your tile to that anchor.

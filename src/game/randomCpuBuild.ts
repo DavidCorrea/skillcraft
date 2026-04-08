@@ -4,6 +4,7 @@ import {
   effectiveAoERadius,
   fitPlayerBudgetToLevel,
   getSkillDef,
+  isAdjacentPhysicalOffense,
   maxSkillsForLevel,
   SKILL_ROSTER,
   totalLoadoutPoints,
@@ -22,6 +23,44 @@ const CORE_TRAIT_KEYS = new Set<keyof TraitPoints>([
   'spellFocus',
   'tenacity',
   'statusPotency',
+])
+
+/** Easy/Normal: roll a role then bias trait picks (lightweight, no full archetype system). */
+const MELEE_BIAS_KEYS = new Set<keyof TraitPoints>([
+  'strength',
+  'agility',
+  'vitality',
+  'fortitude',
+  'physicalTempo',
+  'physicalRhythm',
+  'bleedBonus',
+  'physicalLifesteal',
+  'physicalKnockback',
+  'physicalSlow',
+])
+
+const CASTER_BIAS_KEYS = new Set<keyof TraitPoints>([
+  'intelligence',
+  'wisdom',
+  'spellFocus',
+  'arcaneReach',
+  'statusPotency',
+  'defenseFire',
+  'defenseIce',
+  'defenseWater',
+  'defenseElectric',
+  'defensePoison',
+  'defenseWind',
+  'defenseEarth',
+  'defenseArcane',
+])
+
+const TANK_BIAS_KEYS = new Set<keyof TraitPoints>([
+  'vitality',
+  'fortitude',
+  'tenacity',
+  'regeneration',
+  'agility',
 ])
 
 /** Fill order for Nightmare-style priority spread (after cpuTraitsForLevel-style caps). */
@@ -86,6 +125,17 @@ export function randomFullPlayerLoadout(level: number): { traits: TraitPoints; e
  * At level 1 the smallest legal skill costs 2 points, so the roll uses a budget of at least 2 so the
  * opponent always gets a valid build (the battle `level` in config stays yours; only CPU spend uses this).
  */
+/** Sums traits in each Easy/Normal role bias bucket (keys overlap across buckets). */
+export function cpuTraitRolePillarScores(traits: TraitPoints): { melee: number; caster: number; tank: number } {
+  let melee = 0
+  let caster = 0
+  let tank = 0
+  for (const k of MELEE_BIAS_KEYS) melee += traits[k]
+  for (const k of CASTER_BIAS_KEYS) caster += traits[k]
+  for (const k of TANK_BIAS_KEYS) tank += traits[k]
+  return { melee, caster, tank }
+}
+
 export function randomCpuBuild(
   level: number,
   difficulty: CpuDifficulty = 'normal',
@@ -99,9 +149,10 @@ export function randomCpuBuild(
     const skillCount = randInt(1, maxS)
     const skillIds = pickDistinctSkillIdsForDifficulty(skillCount, difficulty)
     const entries = skillIds.map((id) => randomEntryForSkill(id, budget, difficulty))
-    const err = validateLoadout(budget, entries, maxS, traits)
+    const fitted = fitPlayerBudgetToLevel(budget, traits, entries)
+    const err = validateLoadout(budget, fitted.entries, maxS, fitted.traits)
     if (!err) {
-      return { cpuLoadout: entries, cpuTraits: traits }
+      return { cpuLoadout: fitted.entries, cpuTraits: fitted.traits }
     }
   }
 
@@ -123,9 +174,9 @@ export function randomCpuBuild(
 function traitsForCpuDifficulty(traitTotal: number, difficulty: CpuDifficulty): TraitPoints {
   switch (difficulty) {
     case 'easy':
-      return randomTraitsDistributed(traitTotal)
+      return roleBiasedTraitsDistributed(traitTotal)
     case 'normal':
-      return randomTraitsDistributed(traitTotal)
+      return roleBiasedTraitsDistributed(traitTotal)
     case 'hard':
       return weightedTraitsDistributed(traitTotal)
     case 'nightmare':
@@ -133,12 +184,32 @@ function traitsForCpuDifficulty(traitTotal: number, difficulty: CpuDifficulty): 
   }
 }
 
-/** Uniform random distribution across all trait keys (Easy / Normal). */
+/** Uniform random distribution across all trait keys (fallback / non-CPU). */
 function randomTraitsDistributed(total: number): TraitPoints {
   const t = defaultTraitPoints()
   const keys = Object.keys(t) as (keyof TraitPoints)[]
   for (let i = 0; i < total; i++) {
     const k = keys[Math.floor(Math.random() * keys.length)]!
+    t[k] += 1
+  }
+  return t
+}
+
+/** One of three roles, then weighted picks so CPUs read as melee / caster / tank more often. */
+function roleBiasedTraitsDistributed(total: number): TraitPoints {
+  const roll = Math.random()
+  const role: 'melee' | 'caster' | 'tank' = roll < 1 / 3 ? 'melee' : roll < 2 / 3 ? 'caster' : 'tank'
+  const t = defaultTraitPoints()
+  const keys = TRAIT_KEYS
+  const biasWeight = 6
+  const weights = keys.map((k) => {
+    if (role === 'melee' && MELEE_BIAS_KEYS.has(k)) return biasWeight
+    if (role === 'caster' && CASTER_BIAS_KEYS.has(k)) return biasWeight
+    if (role === 'tank' && TANK_BIAS_KEYS.has(k)) return biasWeight
+    return 1
+  })
+  for (let i = 0; i < total; i++) {
+    const k = weightedPickKey(keys, weights)
     t[k] += 1
   }
   return t
@@ -219,11 +290,13 @@ function pickDistinctSkillIdsForDifficulty(n: number, difficulty: CpuDifficulty)
 
 function skillPickWeight(id: SkillId, difficulty: CpuDifficulty): number {
   const def = getSkillDef(id)
+  const utilBias = def.damageKind === 'none' ? 5 : 0
+  const dmg = Math.min(3, def.baseDamage)
   if (difficulty === 'hard') {
-    return 6 + def.baseDamage + (def.damageKind === 'none' ? 2 : 4)
+    return 6 + dmg + utilBias + (def.damageKind === 'none' ? 0 : 2)
   }
-  // nightmare
-  return 10 + def.baseDamage * 2 + (def.damageKind === 'none' ? 1 : 5)
+  // nightmare — keep damage term but cap it; utilities get a flat bump
+  return 10 + dmg * 2 + utilBias + (def.damageKind === 'none' ? 0 : 3)
 }
 
 function weightedPickIndex(weights: number[]): number {
@@ -328,7 +401,8 @@ function tierCapForLevel(level: number): number {
 function randomEntryForSkill(skillId: SkillId, level: number, difficulty: CpuDifficulty): SkillLoadoutEntry {
   const def = getSkillDef(skillId)
   const cap = tierCapForLevel(level)
-  const rangeTier = tierRoll(cap, difficulty)
+  // Adjacent melee offense ignores range tier in combat; non-zero tier fails validateLoadout.
+  const rangeTier = isAdjacentPhysicalOffense(def) ? 0 : tierRoll(cap, difficulty)
   const aoeTier = tierRoll(cap, difficulty)
   const pattern = randomOffensivePattern(def, rangeTier, aoeTier, difficulty)
   const statusStacks = randInt(1, 5)

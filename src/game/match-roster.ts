@@ -1,6 +1,8 @@
 import type {
   ActorId,
   BattleConfig,
+  CasterToneId,
+  CombatVoicePersonality,
   CpuDifficulty,
   LegacyMatchSettings,
   MatchMode,
@@ -155,6 +157,10 @@ export function balancedTeamIdsForSplit(fighterCount: number, teamCount: number)
 export interface CustomCpuBuildInput {
   loadout: SkillLoadoutEntry[]
   traits: TraitPoints
+  /** When set, this CPU’s combat pools use this level (e.g. player L + challenge offset). */
+  loadoutLevel?: number
+  /** Battle-log banter; omit to assign elsewhere (e.g. random at match start). */
+  personality?: CombatVoicePersonality
 }
 
 /**
@@ -185,6 +191,9 @@ export function buildCustomMatchSettings(args: {
   teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
   overtimeEnabled?: boolean
   roundsUntilOvertime?: number
+  casterTone?: CasterToneId
+  /** Battle-log banter for the human fighter; omit for generic human lines. */
+  humanPersonality?: CombatVoicePersonality
 }): MatchSettings {
   const { teamIds, cpuBuilds } = args
   const err = validateCustomTeamIds(teamIds)
@@ -206,6 +215,7 @@ export function buildCustomMatchSettings(args: {
       traits: args.humanTraits,
       isHuman: true,
       displayName: names[0]!,
+      ...(args.humanPersonality !== undefined ? { personality: args.humanPersonality } : {}),
     },
   ]
 
@@ -222,6 +232,8 @@ export function buildCustomMatchSettings(args: {
       traits: b.traits,
       isHuman: false,
       displayName: names[i + 1]!,
+      ...(b.loadoutLevel !== undefined ? { loadoutLevel: b.loadoutLevel } : {}),
+      ...(b.personality !== undefined ? { personality: b.personality } : {}),
     })
     perCpuDifficulty[id] = args.cpuDifficulties?.[i] ?? defDiff
   }
@@ -238,6 +250,7 @@ export function buildCustomMatchSettings(args: {
     ...(args.roundsUntilOvertime !== undefined
       ? { roundsUntilOvertime: Math.max(1, args.roundsUntilOvertime) }
       : {}),
+    ...(args.casterTone !== undefined ? { casterTone: args.casterTone } : {}),
   })
 }
 

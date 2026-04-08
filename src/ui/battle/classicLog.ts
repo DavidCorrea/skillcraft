@@ -52,7 +52,12 @@ export function formatClassicRow(
     case 'cpu_thinking':
     case 'cpu_situational':
     case 'resource_tick':
+      return null
+
     case 'battle_milestone':
+      if (d.milestone === 'kill_steal') {
+        return { text: entry.text, subject: d.killerId }
+      }
       return null
 
     case 'turn':
@@ -101,15 +106,22 @@ export function formatClassicRow(
 
     case 'strike': {
       const dmg = d.damage
+      const shield =
+        d.shieldAbsorbed !== undefined && d.shieldAbsorbed > 0
+          ? ` (${d.shieldAbsorbed} to shield)`
+          : ''
       if (isHuman(game, d.actorId)) {
-        return { text: `${label(game, d.actorId)} strikes for ${dmg} damage.`, subject: d.actorId }
+        return {
+          text: `${label(game, d.actorId)} lands Strike for ${dmg} damage${shield}.`,
+          subject: d.actorId,
+        }
       }
       return {
         text: pickCpuLine(logIndex, d.actorId, 'strike', [
-          `I strike for ${dmg} damage.`,
-          `My swing lands for ${dmg}.`,
-          `Connecting for ${dmg} damage.`,
-          `Hit for ${dmg} damage.`,
+          `I land Strike for ${dmg} damage${shield}.`,
+          `My swing lands for ${dmg}${shield}.`,
+          `Connecting for ${dmg} damage${shield}.`,
+          `Hit for ${dmg} damage${shield}.`,
         ]),
         subject: d.actorId,
       }
@@ -300,30 +312,64 @@ export function formatClassicRow(
       const name = getSkillDef(d.skillId).name
       const td = d.totalDamage
       const cost = d.manaCost
+      const resWord = getSkillDef(d.skillId).school === 'magic' ? 'mana' : 'stamina'
       if (isHuman(game, d.actorId)) {
-        return { text: `${label(game, d.actorId)} casts ${name} for ${td} damage (${cost} mana).`, subject: d.actorId }
+        return {
+          text: `${label(game, d.actorId)} casts ${name} for ${td} damage (${cost} ${resWord}).`,
+          subject: d.actorId,
+        }
       }
       return {
         text: pickCpuLine(logIndex, d.actorId, 'cast_damage', [
-          `I cast ${name} for ${td} damage (${cost} mana).`,
-          `${name} goes out for ${td} total (${cost} mana).`,
-          `Spellfire: ${name}, ${td} damage (${cost} mana).`,
+          `I cast ${name} for ${td} damage (${cost} ${resWord}).`,
+          `${name} goes out for ${td} total (${cost} ${resWord}).`,
+          `Spellfire: ${name}, ${td} damage (${cost} ${resWord}).`,
         ]),
         subject: d.actorId,
       }
     }
 
+    case 'offensive_whiff': {
+      const name = getSkillDef(d.skillId).name
+      const cost = d.manaCost
+      const rw = d.resource
+      if (isHuman(game, d.actorId)) {
+        return {
+          text: `${label(game, d.actorId)} whiffs ${name} (${cost} ${rw}).`,
+          subject: d.actorId,
+        }
+      }
+      return {
+        text: pickCpuLine(logIndex, d.actorId, 'offensive_whiff', [
+          `I whiff ${name} (${cost} ${rw}).`,
+          `${name} finds nothing (${cost} ${rw}).`,
+          `No contact—${name} (${cost} ${rw}).`,
+        ]),
+        subject: d.actorId,
+      }
+    }
+
+    case 'action_denied':
+      return { text: entry.text, subject: d.actorId }
+
     case 'residual_trigger': {
       const name = getSkillDef(d.skillId).name
       const dmg = d.damage
+      const shield =
+        d.shieldAbsorbed !== undefined && d.shieldAbsorbed > 0
+          ? ` (${d.shieldAbsorbed} to shield)`
+          : ''
       if (isHuman(game, d.victimId)) {
-        return { text: `${label(game, d.victimId)} triggers residual ${name} for ${dmg} damage.`, subject: d.victimId }
+        return {
+          text: `${label(game, d.victimId)} triggers residual ${name} for ${dmg} damage${shield}.`,
+          subject: d.victimId,
+        }
       }
       return {
         text: pickCpuLine(logIndex, d.victimId, 'residual_trigger', [
-          `I trigger residual ${name} for ${dmg} damage.`,
-          `Step on it—${name} hits for ${dmg}.`,
-          `Residual ${name}: ${dmg} damage.`,
+          `I trigger residual ${name} for ${dmg} damage${shield}.`,
+          `Step on it—${name} hits for ${dmg}${shield}.`,
+          `Residual ${name}: ${dmg} damage${shield}.`,
         ]),
         subject: d.victimId,
       }
@@ -429,7 +475,7 @@ export function formatClassicRow(
     }
 
     case 'overtime_begin':
-      return { text: 'Sudden death — the kill zone is marked; the storm strikes on alternate full rounds.' }
+      return { text: 'Sudden death — the kill zone is marked; storm damage hits on alternate full rounds.' }
 
     case 'overtime_storm': {
       const who = label(game, d.victimId)

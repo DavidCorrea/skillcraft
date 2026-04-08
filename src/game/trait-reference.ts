@@ -42,7 +42,8 @@ export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] =
         key: 'strength',
         short: 'STR',
         label: 'Strength',
-        description: 'Extra damage on each hit of physical damage skills (before tempo, rhythm, mitigations).',
+        description:
+          'Extra damage on each hit of physical damage skills (same scaling family as the Strike skill; before tempo, rhythm, mitigations).',
       },
       {
         key: 'bleedBonus',
@@ -78,7 +79,8 @@ export const traitReferenceZones: { title: string; traits: TraitRefEntry[] }[] =
         key: 'physicalRhythm',
         short: 'RHY',
         label: 'Physical rhythm',
-        description: 'Bonus on every 2nd consecutive physical offense; move or magic breaks the chain.',
+        description:
+          'Bonus on every 2nd consecutive physical offensive cast (any physical damage skill); move or elemental cast breaks the chain.',
       },
     ],
   },

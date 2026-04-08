@@ -56,7 +56,7 @@ export function formatStatusLine(s: StatusInstance): string {
     case 'shield':
       return `Shield — ${t.amount} absorb`
     case 'skillFocus':
-      return `Focus — +${t.bonus} on next spell damage`
+      return `Focus — +${t.bonus} on next offensive skill damage`
     case 'immunized':
       return `Immunized — ${t.charges} debuff block${t.charges === 1 ? '' : 's'}`
     default: {

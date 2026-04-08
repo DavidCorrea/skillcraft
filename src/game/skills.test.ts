@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildOffensiveStatusesForSkill,
+  castResourceCost,
   clampSkillLoadoutEntry,
   countGridToPatternOffsets,
   countHitsOnEnemy,
@@ -15,6 +17,7 @@ import {
   maxSkillsForLevel,
   minCastManhattanForLoadout,
   overclockSlowDuration,
+  patternDuplicateHitSurcharge,
   patternOffsetsToCountGrid,
   SKILL_ROSTER,
   skillLoadoutSection,
@@ -37,6 +40,34 @@ describe('Skill craft copy', () => {
     for (const s of SKILL_ROSTER) {
       expect(s.flavor.trim().length, s.id).toBeGreaterThan(0)
       expect(s.effectsLine.trim().length, s.id).toBeGreaterThan(0)
+    }
+  })
+})
+
+/** Minimum level where {@link maxSkillsForLevel} allows `slotCount` skills (1..7). */
+function minLevelForSkillSlotCount(slotCount: number): number {
+  const k = Math.max(1, Math.min(7, Math.floor(slotCount)))
+  if (k <= 1) return 1
+  return 4 * (k - 1) + 1
+}
+
+describe('validateLoadout slot tiers', () => {
+  it('accepts a minimal legal build at each slot count 1..7', () => {
+    const traits = defaultTraitPoints()
+    for (let slotCount = 1; slotCount <= 7; slotCount++) {
+      const level = minLevelForSkillSlotCount(slotCount)
+      const maxS = maxSkillsForLevel(level)
+      expect(maxS, `L${level} should allow ${slotCount} slots`).toBeGreaterThanOrEqual(slotCount)
+      const entries: SkillLoadoutEntry[] = SKILL_ROSTER.slice(0, slotCount).map((s) => ({
+        skillId: s.id,
+        pattern: [{ dx: 0, dy: 0 }],
+        statusStacks: 1,
+        costDiscount: 0,
+        rangeTier: 0,
+        aoeTier: 0,
+      }))
+      expect(entries.length).toBe(slotCount)
+      expect(validateLoadout(level, entries, maxS, traits), `slotCount=${slotCount} level=${level}`).toBeNull()
     }
   })
 })
@@ -75,7 +106,7 @@ describe('patternOffsetsToCountGrid', () => {
 })
 
 describe('entryPointCost', () => {
-  it('counts pattern, stacks, and mana discount', () => {
+  it('counts pattern, stacks, and triangular mana discount tiers', () => {
     const e: SkillLoadoutEntry = {
       skillId: 'ember',
       pattern: [
@@ -85,7 +116,7 @@ describe('entryPointCost', () => {
       statusStacks: 2,
       costDiscount: 2,
     }
-    expect(entryPointCost(e)).toBe(6)
+    expect(entryPointCost(e)).toBe(2 + 2 + tierPointCost(2))
   })
 
   it('adds triangular cost for cast and AoE tiers', () => {
@@ -98,6 +129,42 @@ describe('entryPointCost', () => {
       aoeTier: 2,
     }
     expect(entryPointCost(e)).toBe(2 + tierPointCost(2) + tierPointCost(2))
+  })
+})
+
+describe('patternDuplicateHitSurcharge', () => {
+  it('counts extra hits per repeated offset', () => {
+    expect(patternDuplicateHitSurcharge([{ dx: 0, dy: 0 }, { dx: 0, dy: 0 }, { dx: 1, dy: 0 }])).toBe(1)
+  })
+})
+
+describe('castResourceCost mend duplicate surcharge', () => {
+  it('adds +1 per duplicate offset for Mend', () => {
+    const entry: SkillLoadoutEntry = {
+      skillId: 'mend',
+      pattern: [
+        { dx: 0, dy: 0 },
+        { dx: 0, dy: 0 },
+      ],
+      statusStacks: 1,
+      costDiscount: 0,
+    }
+    expect(castResourceCost(entry, getSkillDef('mend'), 0)).toBe(4)
+  })
+})
+
+describe('buildOffensiveStatusesForSkill', () => {
+  it('venom at 5+ stacks applies regen block and weaker poison', () => {
+    const tags = buildOffensiveStatusesForSkill('venom_dart', 5, 0)
+    expect(tags.map((t) => t.t).sort()).toEqual(['poisoned', 'regenBlocked'])
+  })
+
+  it('clamps Spark shock vuln at status cap', () => {
+    const tags = buildOffensiveStatusesForSkill('spark', 10, 10)
+    expect(tags).toHaveLength(1)
+    const t = tags[0]!
+    expect(t.t).toBe('shocked')
+    if (t.t === 'shocked') expect(t.vuln).toBeLessThanOrEqual(5)
   })
 })
 
@@ -374,7 +441,7 @@ describe('clampSkillLoadoutEntry', () => {
 })
 
 describe('fitPlayerBudgetToLevel', () => {
-  it('shrinks traits then skills when level drops', () => {
+  it('shrinks skills then traits when level drops', () => {
     const entries: SkillLoadoutEntry[] = [
       { skillId: 'ember', pattern: [{ dx: 0, dy: 0 }], statusStacks: 4, costDiscount: 0 },
     ]

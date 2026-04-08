@@ -136,7 +136,7 @@ describe('pickCpuAction', () => {
         { loadout: strikeOnlyLoadout, traits: defaultTraitPoints() },
       ],
       teamIds: [0, 0, 1],
-      defaultCpuDifficulty: 'normal',
+      defaultCpuDifficulty: 'hard',
     })
     const cfg: BattleConfig = {
       level: 8,
@@ -153,7 +153,7 @@ describe('pickCpuAction', () => {
     s = {
       ...s,
       turn: allyCpuId,
-      cpuDifficulty: { ...s.cpuDifficulty, [allyCpuId]: 'normal' },
+      cpuDifficulty: { ...s.cpuDifficulty, [allyCpuId]: 'hard' },
       actors: {
         ...s.actors,
         [humanId]: { ...s.actors[humanId]!, pos: { x: 3, y: 4 }, mana: 0 },

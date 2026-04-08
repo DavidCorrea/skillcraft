@@ -1,4 +1,4 @@
-import type { StatusReactionKey } from '../../game/types'
+import type { CasterToneId, CombatVoicePersonality, StatusReactionKey } from '../../game/types'
 
 /** Caster play-by-play lines; use `{name}` for target label. */
 export const REACTION_CASTER_LINES: Record<StatusReactionKey, readonly string[]> = {
@@ -75,7 +75,7 @@ export const REACTION_CASTER_LINES: Record<StatusReactionKey, readonly string[]>
   groundGrip: [
     'Ground grip — shock wrenches {name}\'s grip; weapon tempo breaks.',
     '{name} loses the swing — ground grip from shock on the pin.',
-    'Lightning locks {name}\'s hands — ground grip, strike denied.',
+    'Lightning locks {name}\'s hands — ground grip, melee denied.',
   ],
   crystallize: [
     'Crystallize — venom locks in the cold on {name}.',
@@ -248,10 +248,59 @@ export const REACTION_CPU_LINES: Record<StatusReactionKey, readonly string[]> = 
   ],
 }
 
+/** Merged after base reaction lines when caster tone is not classic. */
+const STATUS_REACTION_CASTER_TONE_EXTRAS: Partial<Record<CasterToneId, readonly string[]>> = {
+  grim_war_report: [
+    '{name} — elemental books close another page.',
+    'Tags churn on {name}; chemistry bites.',
+  ],
+  snarky_desk: [
+    '{name} — status math just got personal.',
+    'Reaction pop on {name}; someone update the spreadsheet.',
+  ],
+  arcane_showman: [
+    '{name} — the elements take a bow together.',
+    'Synergy flare on {name}.',
+  ],
+  cold_analyst: [
+    '{name} — reaction resolved; state delta applied.',
+    'Status interaction on {name} logged.',
+  ],
+}
+
+/** Merged after base reaction CPU lines when the target has a combat personality. */
+const STATUS_REACTION_CPU_PERSONALITY_EXTRAS: Partial<Record<CombatVoicePersonality, readonly string[]>> = {
+  stoic: ['Element trade — noted.', 'Tags shifted — steady.'],
+  snarky: ['Chemistry delivered — rude.', 'Status drama — of course.'],
+  hot_headed: ['That mix burned!', 'Tags exploded on me!'],
+  tactical: ['Reaction read — adjusting.', 'Stack interaction — accounted.'],
+  unhinged: ['The elements gossiped — wild.', 'Ha — status party!'],
+  grim: ['Another rot in the mix.', 'Tags dig deeper.'],
+  cocky: ['Easy reaction — felt cute.', 'Status flex — handled.'],
+}
+
 export function casterLinesForReaction(key: StatusReactionKey): readonly string[] {
   return REACTION_CASTER_LINES[key]
 }
 
+/** Wider pool: tone-colored extras plus reaction-specific classic lines. */
+export function casterLinesForReactionWithTone(key: StatusReactionKey, tone: CasterToneId): readonly string[] {
+  const base = REACTION_CASTER_LINES[key]
+  if (tone === 'classic_arena') return base
+  const extra = STATUS_REACTION_CASTER_TONE_EXTRAS[tone]
+  return extra?.length ? [...extra, ...base] : base
+}
+
 export function cpuLinesForReaction(key: StatusReactionKey): readonly string[] {
   return REACTION_CPU_LINES[key]
+}
+
+export function cpuLinesForReactionWithPersonality(
+  key: StatusReactionKey,
+  personality: CombatVoicePersonality | undefined,
+): readonly string[] {
+  const base = REACTION_CPU_LINES[key]
+  if (personality === undefined) return base
+  const extra = STATUS_REACTION_CPU_PERSONALITY_EXTRAS[personality]
+  return extra?.length ? [...extra, ...base] : base
 }

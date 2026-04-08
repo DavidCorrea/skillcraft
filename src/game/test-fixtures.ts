@@ -129,3 +129,68 @@ export function ffaBattleConfig(partial: Pick<
     match: matchSettingsFfa({ ...partial, extra }),
   }
 }
+
+/**
+ * Four-way FFA with three distinct CPU builds (human + three opponents).
+ * `BattleConfig.cpuLoadout` / `cpuTraits` mirror the first opponent for legacy fields.
+ */
+export function ffaBattleConfigThreeOpponents(args: {
+  level: number
+  playerLoadout: SkillLoadoutEntry[]
+  playerTraits: TraitPoints
+  opponents: [ExtraCpuBuild, ExtraCpuBuild, ExtraCpuBuild]
+}): BattleConfig {
+  const [o0, o1, o2] = args.opponents
+  const roster: MatchRosterEntry[] = [
+    {
+      actorId: TID.human,
+      teamId: 0,
+      loadout: args.playerLoadout,
+      traits: args.playerTraits,
+      isHuman: true,
+      displayName: 'Vex',
+    },
+    {
+      actorId: TID.cpu,
+      teamId: 1,
+      loadout: o0.loadout,
+      traits: o0.traits,
+      isHuman: false,
+      displayName: 'Shard',
+    },
+    {
+      actorId: TID.cpu2,
+      teamId: 2,
+      loadout: o1.loadout,
+      traits: o1.traits,
+      isHuman: false,
+      displayName: 'Rook',
+    },
+    {
+      actorId: TID.cpu3,
+      teamId: 3,
+      loadout: o2.loadout,
+      traits: o2.traits,
+      isHuman: false,
+      displayName: 'Null',
+    },
+  ]
+  return {
+    level: args.level,
+    playerLoadout: args.playerLoadout,
+    playerTraits: args.playerTraits,
+    cpuLoadout: o0.loadout,
+    cpuTraits: o0.traits,
+    match: {
+      roster,
+      humanActorId: TID.human,
+      friendlyFire: true,
+      defaultCpuDifficulty: 'normal',
+      perCpuDifficulty: {
+        [TID.cpu]: 'normal',
+        [TID.cpu2]: 'normal',
+        [TID.cpu3]: 'normal',
+      },
+    },
+  }
+}

@@ -109,6 +109,7 @@ function mixActor(h: bigint, a: ActorState): bigint {
   h = mixInt(h, a.stamina)
   h = mixInt(h, a.maxStamina)
   h = mixTraits(h, a.traits)
+  h = mixInt(h, a.combatLevel)
   h = mixInt(h, a.moveMaxSteps)
   h = mixInt(h, a.manaRegenPerTurn)
   h = mixInt(h, a.tilesMovedThisTurn)

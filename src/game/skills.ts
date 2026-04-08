@@ -3,6 +3,7 @@ import type { Element } from './elements'
 import type { PatternOffset, SkillId, SkillLoadoutEntry, StatusTag, TraitPoints } from './types'
 import { defaultTraitPoints, shrinkOnePointFromTraits, totalTraitPoints } from './traits'
 import { BOARD_SIZE } from './board'
+import { VULN_CAP } from './status-reference'
 
 /** @param boardSize grid width/height (default 7 for tests / editor). */
 export function patternFullyInBounds(
@@ -111,7 +112,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'A snapped ley-line—loud, bright, and impossible to ignore.',
-    effectsLine: 'Shocked (extra flat damage taken from hits, capped).',
+    effectsLine: 'Shocked (extra flat damage from hits; vuln capped when applied).',
     damageKind: 'elemental',
   },
   {
@@ -123,7 +124,8 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'A barbed sting that works inward, not outward.',
-    effectsLine: 'Poisoned (DoT); at 5+ stacks, Regen blocked instead.',
+    effectsLine:
+      'Poisoned (DoT); at 5+ stacks, Regen blocked and a shorter, weaker poison remains.',
     damageKind: 'elemental',
   },
   {
@@ -131,11 +133,11 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     name: 'Zephyr Cut',
     element: 'wind',
     range: 4,
-    baseDamage: 3,
+    baseDamage: 2,
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'Wind forged into a razor’s sigh across open air.',
-    effectsLine: 'Chilled.',
+    effectsLine: 'Marked (called shot); longer reach than Frost, less raw damage.',
     damageKind: 'elemental',
   },
   {
@@ -147,7 +149,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'The ground remembers every footfall—and answers in kind.',
-    effectsLine: 'Chilled; at 2+ stacks, Frozen for one turn; at 4+ stacks, Rooted instead.',
+    effectsLine: 'Chilled; at 2+ stacks, Frozen for one turn; at 5+ stacks, Rooted instead.',
     damageKind: 'elemental',
   },
   {
@@ -159,7 +161,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'Raw syllables without a thesis—still, they find a nerve.',
-    effectsLine: 'Shocked; at 5+ stacks, Silenced instead.',
+    effectsLine: 'Shocked; at 5+ stacks, Silenced plus a short, mild shock (vuln capped).',
     damageKind: 'elemental',
   },
   {
@@ -218,9 +220,9 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     baseDamage: 0,
     describePattern: 'Custom relative to target',
     school: 'magic',
-    flavor: 'One breath held—then the next strike remembers your name.',
+    flavor: 'One breath held—then the next hit remembers your name.',
     effectsLine:
-      'Stores focus on each target hit (bonus scales with Focus pattern hits on that target). That unit\'s next offensive cast consumes all their focus and adds the sum once per enemy damaged.',
+      'Stores focus on each pattern-hit unit (bonus scales with hits on that target). Their next offensive cast consumes all of their focus and adds the sum once per enemy damaged. Warning: enemies you hit are buffed — aim on allies/self unless you want to empower them.',
     damageKind: 'none',
   },
   {
@@ -328,7 +330,7 @@ export const SKILL_ROSTER: SkillDefinition[] = [
     describePattern: 'Custom relative to target',
     school: 'magic',
     flavor: 'A cough of green vapor that clings to mail like guilt.',
-    effectsLine: 'Poisoned (DoT); at 3+ stacks, Marked instead.',
+    effectsLine: 'Poisoned (DoT); at 3+ stacks, Marked and a weaker poison remain.',
     damageKind: 'elemental',
   },
 ]
@@ -447,11 +449,12 @@ export function basePowerCost(entry: SkillLoadoutEntry): number {
   return entry.pattern.length + entry.statusStacks
 }
 
-/** Loadout points: power + cost-efficiency points + range tier cost + AoE tier cost. */
+/** Loadout points: power + triangular cost-discount tiers + range + AoE. */
 export function entryPointCost(entry: SkillLoadoutEntry): number {
+  const d = Math.max(0, Math.floor(entry.costDiscount ?? 0))
   return (
     basePowerCost(entry) +
-    entry.costDiscount +
+    tierPointCost(d) +
     tierPointCost(entry.rangeTier ?? 0) +
     tierPointCost(entry.aoeTier ?? 0)
   )
@@ -468,18 +471,36 @@ export function chargeableEntryPointCost(entry: SkillLoadoutEntry): number {
   return Math.max(0, entryPointCost(entry) - BASELINE_SKILL_LOADOUT_POINT_COST)
 }
 
+/** Extra resource per duplicate pattern cell beyond the first at the same offset (Ward/Mend surcharge). */
+export function patternDuplicateHitSurcharge(pattern: PatternOffset[]): number {
+  const m = new Map<string, number>()
+  for (const o of pattern) {
+    const k = `${o.dx},${o.dy}`
+    m.set(k, (m.get(k) ?? 0) + 1)
+  }
+  let extra = 0
+  for (const n of m.values()) {
+    extra += Math.max(0, n - 1)
+  }
+  return extra
+}
+
 /**
  * Resource (mana or stamina) spent when casting; min 1.
  * Base: pattern cells + status stacks, minus cost discount.
  * Each Manhattan tile from you to the cast anchor adds +1.
+ * Mend/Ward add +1 per repeated pattern offset (same-cell stacking tax).
  */
 export function castResourceCost(
   entry: SkillLoadoutEntry,
   def: SkillDefinition,
   manhattanFromCasterToAnchor = 0,
 ): number {
-  void def
-  const raw = basePowerCost(entry) - entry.costDiscount + manhattanFromCasterToAnchor
+  const dup =
+    def.damageKind === 'none' && (def.id === 'mend' || def.id === 'ward')
+      ? patternDuplicateHitSurcharge(entry.pattern)
+      : 0
+  const raw = basePowerCost(entry) - entry.costDiscount + manhattanFromCasterToAnchor + dup
   return Math.max(1, raw)
 }
 
@@ -585,11 +606,14 @@ export function overclockSlowDuration(statusStacks: number): number {
   return Math.max(1, Math.floor(statusStacks / 2) + 1)
 }
 
-export function buildStatusForSkill(
+/**
+ * Status tags applied by an offensive hit or tile residual (may be multiple after stack thresholds).
+ */
+export function buildOffensiveStatusesForSkill(
   skillId: SkillId,
   statusStacks: number,
   statusPotency = 0,
-): StatusTag {
+): StatusTag[] {
   const p = Math.max(1, statusStacks)
   const pot = Math.max(0, statusPotency)
   const pd = Math.floor(pot / 2)
@@ -598,40 +622,67 @@ export function buildStatusForSkill(
     case 'strike':
       throw new Error('Strike bleed/slow handled in engine.')
     case 'ember':
-      return { t: 'burning', duration: 2 + Math.floor(statusStacks / 3) + Math.floor(pot / 4), dot: 2 + p + pd }
+      return [{ t: 'burning', duration: 2 + Math.floor(statusStacks / 3) + Math.floor(pot / 4), dot: 2 + p + pd }]
     case 'frost_bolt':
-      return statusStacks >= 2
-        ? { t: 'frozen', turns: 1 }
-        : { t: 'chilled', duration: 2 + p + Math.floor(pot / 3) }
+      return [
+        statusStacks >= 2
+          ? { t: 'frozen', turns: 1 }
+          : { t: 'chilled', duration: 2 + p + Math.floor(pot / 3) },
+      ]
     case 'tide_touch':
-      return { t: 'soaked', duration: 3 + p + pd }
+      return [{ t: 'soaked', duration: 3 + p + pd }]
     case 'spark':
-      return { t: 'shocked', duration: 2 + p + Math.floor(pot / 3), vuln: 1 + p + Math.min(3, pd) }
+      return [
+        {
+          t: 'shocked',
+          duration: 2 + p + Math.floor(pot / 3),
+          vuln: Math.min(VULN_CAP, 1 + p + Math.min(3, pd)),
+        },
+      ]
     case 'venom_dart':
       if (statusStacks >= 5) {
-        return { t: 'regenBlocked', duration: 2 + Math.floor(pot / 3) }
+        const fullDot = 1 + p + Math.floor(pot / 3)
+        return [
+          { t: 'regenBlocked', duration: 2 + Math.floor(pot / 3) },
+          { t: 'poisoned', duration: 2 + Math.floor(p / 2) + pd, dot: Math.max(1, Math.floor(fullDot / 2)) },
+        ]
       }
-      return { t: 'poisoned', duration: 4 + p + pd, dot: 1 + p + Math.floor(pot / 3) }
+      return [{ t: 'poisoned', duration: 4 + p + pd, dot: 1 + p + Math.floor(pot / 3) }]
     case 'zephyr_cut':
-      return { t: 'chilled', duration: 2 + p + Math.floor(pot / 4) }
+      return [{ t: 'marked', duration: 2 + Math.floor(p / 3), extra: 1 + Math.min(3, pd) }]
     case 'tremor':
-      if (statusStacks >= 4) {
-        return { t: 'rooted', duration: 1 + Math.floor(pot / 3) }
+      if (statusStacks >= 5) {
+        return [{ t: 'rooted', duration: 1 + Math.floor(pot / 3) }]
       }
-      return statusStacks >= 2
-        ? { t: 'frozen', turns: 1 }
-        : { t: 'chilled', duration: 2 + Math.floor(p / 2) + Math.floor(pot / 4) }
+      return [
+        statusStacks >= 2
+          ? { t: 'frozen', turns: 1 }
+          : { t: 'chilled', duration: 2 + Math.floor(p / 2) + Math.floor(pot / 4) },
+      ]
     case 'arcane_pulse':
       if (statusStacks >= 5) {
-        return { t: 'silenced', duration: 1 + Math.floor(pot / 3) }
+        return [
+          { t: 'silenced', duration: 1 + Math.floor(pot / 3) },
+          {
+            t: 'shocked',
+            duration: 1 + Math.floor(p / 3),
+            vuln: Math.min(VULN_CAP, 1 + Math.floor(pd / 2) + 1),
+          },
+        ]
       }
-      return { t: 'shocked', duration: 2 + Math.floor(p / 2) + Math.floor(pot / 4), vuln: p + pd }
+      return [
+        {
+          t: 'shocked',
+          duration: 2 + Math.floor(p / 2) + Math.floor(pot / 4),
+          vuln: Math.min(VULN_CAP, p + pd),
+        },
+      ]
     case 'void_lance':
-      return { t: 'poisoned', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 3) }
+      return [{ t: 'poisoned', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 3) }]
     case 'mend':
       throw new Error('Mend has no offensive status — handled in engine.')
     case 'ward':
-      return { t: 'shield', amount: wardShieldAmount(p, pot) }
+      return [{ t: 'shield', amount: wardShieldAmount(p, pot) }]
     case 'purge':
       throw new Error('Purge has no status — handled in engine.')
     case 'focus':
@@ -640,24 +691,38 @@ export function buildStatusForSkill(
     case 'overclock':
       throw new Error(`${skillId} has no tile/offensive status — handled in engine.`)
     case 'splinter':
-      return { t: 'bleeding', duration: 2 + p + pd, dot: 2 + Math.floor(p / 2) + pd }
+      return [{ t: 'bleeding', duration: 2 + p + pd, dot: 2 + Math.floor(p / 2) + pd }]
     case 'cleave':
-      return { t: 'chilled', duration: 1 + Math.floor(p / 3) }
+      return [{ t: 'chilled', duration: 1 + Math.floor(p / 3) }]
     case 'shove':
-      return { t: 'slowed', duration: 1 }
+      return [{ t: 'slowed', duration: 1 }]
     case 'hamstring':
-      return { t: 'slowed', duration: 2 + p + Math.floor(pot / 4) }
+      return [{ t: 'slowed', duration: 2 + p + Math.floor(pot / 4) }]
     case 'rend':
-      return { t: 'bleeding', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 2) }
+      return [{ t: 'bleeding', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 2) }]
     case 'caustic_cloud':
-      return statusStacks >= 3
-        ? { t: 'marked', duration: 2 + Math.floor(p / 2), extra: 2 + Math.min(4, pd) }
-        : {
-            t: 'poisoned',
-            duration: 3 + p + pd,
-            dot: 2 + p + Math.floor(pot / 2),
-          }
+      if (statusStacks >= 3) {
+        const fullDot = 2 + p + Math.floor(pot / 2)
+        return [
+          { t: 'marked', duration: 2 + Math.floor(p / 2), extra: 2 + Math.min(4, pd) },
+          { t: 'poisoned', duration: 2 + p, dot: Math.max(1, Math.floor(fullDot / 2)) },
+        ]
+      }
+      return [{ t: 'poisoned', duration: 3 + p + pd, dot: 2 + p + Math.floor(pot / 2) }]
   }
+}
+
+/** @deprecated Prefer {@link buildOffensiveStatusesForSkill} when a skill may apply multiple tags. */
+export function buildStatusForSkill(
+  skillId: SkillId,
+  statusStacks: number,
+  statusPotency = 0,
+): StatusTag {
+  const tags = buildOffensiveStatusesForSkill(skillId, statusStacks, statusPotency)
+  if (tags.length !== 1) {
+    throw new Error(`${skillId} applies multiple statuses — use buildOffensiveStatusesForSkill()`)
+  }
+  return tags[0]!
 }
 
 export function offsetInPatternGrid(o: PatternOffset): boolean {
@@ -786,7 +851,7 @@ export function clampSkillLoadoutEntry(
 }
 
 /**
- * When level drops below current spend, trim traits first, then shrink skills until under budget.
+ * When level drops below current spend, shrink skill tuning first, then trim traits until under budget.
  * May leave spend above level if the loadout cannot shrink further (e.g. multiple skills at minimum cost).
  */
 export function fitPlayerBudgetToLevel(
@@ -805,10 +870,6 @@ export function fitPlayerBudgetToLevel(
   }))
   let guard = 0
   while (totalLoadoutPoints(ent, t) > level && guard++ < 500) {
-    if (totalTraitPoints(t) > 0) {
-      t = shrinkOnePointFromTraits(t)
-      continue
-    }
     let bestIdx = -1
     let bestCost = -1
     for (let i = 0; i < ent.length; i++) {
@@ -818,13 +879,21 @@ export function fitPlayerBudgetToLevel(
         bestIdx = i
       }
     }
-    if (bestIdx < 0 || bestCost <= 0) break
-    const e = ent[bestIdx]!
-    const def = getSkillDef(e.skillId)
-    const prevCost = entryPointCost(e)
-    const clamped = clampSkillLoadoutEntry(e, def, Math.max(0, prevCost - 1))
-    if (entryPointCost(clamped) >= prevCost) break
-    ent[bestIdx] = clamped
+    if (bestIdx >= 0 && bestCost > 0) {
+      const e = ent[bestIdx]!
+      const def = getSkillDef(e.skillId)
+      const prevCost = entryPointCost(e)
+      const clamped = clampSkillLoadoutEntry(e, def, Math.max(0, prevCost - 1))
+      if (entryPointCost(clamped) < prevCost) {
+        ent[bestIdx] = clamped
+        continue
+      }
+    }
+    if (totalTraitPoints(t) > 0) {
+      t = shrinkOnePointFromTraits(t)
+      continue
+    }
+    break
   }
   return { traits: t, entries: ent }
 }

@@ -1,6 +1,7 @@
 import CpuWorker from './cpu.worker?worker'
 import { CPU_THINK_TIMEOUT_MS } from './cpuThinkBudget'
 import { pickCpuAction } from './cpu'
+import { gameStateForCpuWorker } from './cpuSearchState'
 import type { CpuWorkerInbound, CpuWorkerOutbound } from './cpuWorkerProtocol'
 import type { GameAction } from '../game/engine'
 import type { ActorId, GameState } from '../game/types'
@@ -17,7 +18,8 @@ function isVitestTestRun(): boolean {
 /**
  * Runs CPU move search in a Web Worker so the UI stays responsive during deep lookahead.
  * In Vitest (`MODE === 'test'`), runs {@link pickCpuAction} on the main thread instead (no Workers).
- * Enforces {@link CPU_THINK_TIMEOUT_MS} on worker runs; on timeout the worker is replaced and easy AI picks a move.
+ * Posts a log-stripped copy of state ({@link gameStateForCpuWorker}) to reduce clone cost.
+ * Enforces {@link CPU_THINK_TIMEOUT_MS} on worker runs (emergency cap, 60s by default); on timeout the worker is replaced and easy AI picks a move. In-search budgets live in {@link cpuSearchDeadlineMs} / {@link cpuSearchMaxNodes}.
  */
 export function requestCpuPick(
   state: GameState,
@@ -73,7 +75,7 @@ export function requestCpuPick(
     }
     worker.addEventListener('message', onMessage)
     worker.addEventListener('error', onError)
-    const payload: CpuWorkerInbound = { state, actorId }
+    const payload: CpuWorkerInbound = { state: gameStateForCpuWorker(state), actorId }
     worker.postMessage(payload)
   })
 }

@@ -39,7 +39,7 @@ export function PatternEditor({
         </p>
       ) : (
         <p className="pattern-label pattern-label--compact">
-          Anchor = board click · cells = loadout pts · &gt;1 = repeat strike
+          Anchor = board click · cells = loadout pts · &gt;1 = repeat hit
         </p>
       )}
       <div

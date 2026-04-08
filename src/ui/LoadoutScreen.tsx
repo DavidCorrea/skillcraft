@@ -26,6 +26,7 @@ import {
 import { boardSizeForLevel } from '../game/board'
 import {
   BASE_MAX_HP,
+  bonusMaxManaFromBattleLevel,
   defaultTraitPoints,
   HP_PER_VITALITY,
   MANA_PER_WISDOM,
@@ -120,7 +121,7 @@ function LoadoutSkillRailDetails({
           <>
             <dt>Cast discount</dt>
             <dd>
-              −{discount} {resShort} from loadout spend
+              −{discount} {resShort}/cast · {tierPointCost(discount)} loadout pts (triangular tiers, same as range/AoE)
             </dd>
           </>
         ) : null}
@@ -328,7 +329,7 @@ function traitHint(
     case 'statusPotency':
       return 'Stronger skill DoTs, shock, and durations'
     case 'strength':
-      return `Strike base ${previewStrikeBase} · ~${previewStrikeWithTempo} w/ physical tempo (≤1 tile)`
+      return `Strike skill base ${previewStrikeBase} · ~${previewStrikeWithTempo} w/ physical tempo (≤1 tile)`
     case 'bleedBonus':
       return 'Stronger bleed on physical damage hits'
     case 'physicalLifesteal':
@@ -550,7 +551,7 @@ export function LoadoutScreen({
   const moveMaxSteps = 1 + traits.agility
   const manaRegenPerTurn = 1 + traits.intelligence
   const previewMaxHp = BASE_MAX_HP + traits.vitality * HP_PER_VITALITY
-  const previewMaxMana = level + traits.wisdom * MANA_PER_WISDOM
+  const previewMaxMana = level + traits.wisdom * MANA_PER_WISDOM + bonusMaxManaFromBattleLevel(level)
   const previewStrikeBase = strikeDamage(traits.strength)
   const previewStrikeWithTempo = totalStrikeDamage(traits, 0, 0)
   const previewStrikeRhythm2 = totalStrikeDamage(traits, 0, 1)
@@ -584,13 +585,20 @@ export function LoadoutScreen({
       : 0
   const activeMaxDiscount =
     activeEntry && activeSkill && activeCfg
-      ? Math.min(
-          Math.max(0, basePowerCost(activeEntry) - 1),
-          Math.max(
-            0,
-            activeSkillBudget - activeCfg.pattern.length - activeCfg.statusStacks,
-          ),
-        )
+      ? (() => {
+          const base = basePowerCost(activeEntry)
+          const patternCost = activeCfg.pattern.length
+          const stackCost = activeCfg.statusStacks
+          const rt = tierPointCost(activeCfg.rangeTier ?? 0)
+          const at = tierPointCost(activeCfg.aoeTier ?? 0)
+          const remaining = activeSkillBudget - patternCost - stackCost - rt - at
+          const cap = Math.max(0, base - 1)
+          let d = 0
+          while (d < cap && tierPointCost(d + 1) <= remaining) {
+            d += 1
+          }
+          return d
+        })()
       : 0
   const activeMaxStacks =
     activeEntry && activeSkill && activeCfg
@@ -598,7 +606,11 @@ export function LoadoutScreen({
           1,
           Math.min(
             level,
-            activeSkillBudget - activeCfg.pattern.length - (activeCfg.costDiscount ?? 0),
+            activeSkillBudget -
+              activeCfg.pattern.length -
+              tierPointCost(activeCfg.costDiscount ?? 0) -
+              tierPointCost(activeCfg.rangeTier ?? 0) -
+              tierPointCost(activeCfg.aoeTier ?? 0),
           ),
         )
       : 1
@@ -608,7 +620,7 @@ export function LoadoutScreen({
           activeSkillBudget -
             activeCfg.pattern.length -
             activeCfg.statusStacks -
-            (activeCfg.costDiscount ?? 0) -
+            tierPointCost(activeCfg.costDiscount ?? 0) -
             tierPointCost(activeCfg.aoeTier ?? 0),
         )
       : 0
@@ -619,7 +631,7 @@ export function LoadoutScreen({
           activeSkillBudget -
             activeCfg.pattern.length -
             activeCfg.statusStacks -
-            (activeCfg.costDiscount ?? 0) -
+            tierPointCost(activeCfg.costDiscount ?? 0) -
             tierPointCost(activeCfg.rangeTier ?? 0),
         )
       : 0
@@ -852,14 +864,15 @@ export function LoadoutScreen({
         <p className="ls-modal__note">
           Each <strong>scenario</strong> is a fantasy preset: roster, whether CPUs share one difficulty or have their own,
           board size (or auto), and sudden death. Use <strong>Fighters</strong> / <strong>Teams</strong> for a fresh
-          balanced split; <strong>Custom</strong> keeps your current sheet so you can tweak anything. Skills, Strikes, and
-          tile hazards can hit anyone in range — allies and yourself included.
+          balanced split; <strong>Custom</strong> keeps your current sheet so you can tweak anything. Skills (elemental and
+          physical) and tile hazards can hit anyone in range — allies and yourself included.
         </p>
         <p className="ls-modal__note">
           <strong>CPU difficulty</strong> applies per computer fighter: how they roll random loadouts and traits, and how
           strong their lookahead is when it is their turn. Non-Easy levels use deeper search in <strong>1v1</strong> than
-          with <strong>three or more fighters</strong> (branching is higher in big matches). Nightmare &gt; Hard &gt;
-          Normal; Easy sometimes picks among legal moves at random.
+          with <strong>three or more fighters</strong> (branching is higher in big matches, so depth eases back when many
+          fighters are alive). Steps up evenly: Normal &lt; Hard &lt; Nightmare. Easy picks randomly among legal moves
+          often; Normal can slip to a second-best move sometimes so it sits between Easy and Hard.
         </p>
         <p className="ls-modal__note">
           <strong>Team colors</strong> sit under the roster in the center column. <strong>More options</strong> (right on
@@ -881,8 +894,13 @@ export function LoadoutScreen({
           loadout is valid. Start battle runs from the Match step.
         </li>
         <li>
-          <strong>One budget.</strong> Level is your total point pool. The meter shows total spent vs level; the footer
-          breaks down trait vs skill spend.
+          <strong>One budget, layered combat pools.</strong> Level caps traits + skill tuning spend. Max mana still
+          grows with level and Wisdom, and hits extra bands at L25/L50; stamina pool and turn regen get parallel bumps so
+          physical play keeps pace. Mend/Ward cost +1 resource per repeated pattern cell on the same offset.
+        </li>
+        <li>
+          <strong>Match step.</strong> <em>Fair duel</em> rolls CPUs at your level. <em>Challenge</em> adds a CPU level
+          offset so opponents have more loadout budget and combat pools than you (same scenario rules otherwise).
         </li>
         <li>
           <strong>Trait steppers.</strong> Each point costs 1 level budget. Subtitles under each row and the battle

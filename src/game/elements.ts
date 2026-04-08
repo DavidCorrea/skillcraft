@@ -8,5 +8,5 @@ export type Element =
   | 'wind'
   | 'earth'
   | 'arcane'
-  /** Physical projectiles — mitigated like Strikes, not by elemental defense. */
+  /** Physical — mitigated like other physical damage skills (Fortitude), not elemental defense traits. */
   | 'physical'

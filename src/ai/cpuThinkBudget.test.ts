@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cpuThinkRemainingRatio } from './cpuThinkRing'
+import { cpuThinkRemainingRatio } from './cpuThinkBudget'
 
 describe('cpuThinkRemainingRatio', () => {
   it('returns 1 when the full budget remains', () => {

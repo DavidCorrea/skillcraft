@@ -23,7 +23,7 @@ describe('deriveLoadoutBattleStats', () => {
     const t = { ...defaultTraitPoints(), strength: 1, physicalRhythm: 2 }
     const g = deriveLoadoutBattleStats(t, 1)
     const phys = g.find((x) => x.title === 'Physical damage skills (before their mitigations)')!
-    const base = Number(phys.rows.find((r) => r.label === 'Strike base (2 + Strength)')!.value)
+    const base = Number(phys.rows.find((r) => r.label === 'Strike skill base (2 + Strength)')!.value)
     const r2 = Number(phys.rows.find((r) => r.label === '2nd-chain hit (rhythm)')!.value)
     expect(r2).toBeGreaterThan(base)
   })

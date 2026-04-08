@@ -26,7 +26,7 @@ describe('formatStatusLine', () => {
 
   it('formats skill focus', () => {
     expect(formatStatusLine({ id: '1', tag: { t: 'skillFocus', bonus: 5 } })).toBe(
-      'Focus — +5 on next spell damage',
+      'Focus — +5 on next offensive skill damage',
     )
   })
 

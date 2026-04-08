@@ -6,6 +6,7 @@ import {
   maxStaminaForTraits,
   physicalLingeringHitRaw,
   physicalOffenseDamagePerHit,
+  physicalOffenseRawTotalBeforeFortitude,
   shrinkOnePointFromTraits,
   strikeDamage,
   STRIKE_BASE_DAMAGE,
@@ -80,6 +81,16 @@ describe('physicalOffenseDamagePerHit', () => {
     const t0 = defaultTraitPoints()
     const t1 = { ...defaultTraitPoints(), strength: 2 }
     expect(physicalOffenseDamagePerHit(3, t1, 99, 0)).toBeGreaterThan(physicalOffenseDamagePerHit(3, t0, 99, 0))
+  })
+})
+
+describe('physicalOffenseRawTotalBeforeFortitude', () => {
+  it('applies Strength once per target while hits multiply only base+tempo+rhythm', () => {
+    const t = { ...defaultTraitPoints(), strength: 2, physicalTempo: 0, physicalRhythm: 0 }
+    const stackedOld = physicalOffenseDamagePerHit(2, t, 0, 0) * 3
+    const nue = physicalOffenseRawTotalBeforeFortitude(2, t, 0, 0, 3)
+    expect(stackedOld).toBe(18)
+    expect(nue).toBe(10)
   })
 })
 

@@ -17,6 +17,13 @@ function minimalGame(overrides: Partial<GameState> = {}): GameState {
     teamByActor: { h: 0, c1: 1, c2: 2 },
     humanActorId: 'h',
     cpuDifficulty: {},
+    casterTone: 'classic_arena',
+    fullRoundsCompleted: 0,
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+    overtime: null,
+    tie: false,
+    lastHpDamageFrom: {},
     ...overrides,
   } as GameState
 }
@@ -25,7 +32,7 @@ describe('expandBroadcastRows', () => {
   it('expands strike with caster and CPU attacker/victim lines', () => {
     const game = minimalGame()
     const entry: BattleLogEntry = {
-      text: 'Hostile strikes for 5 physical damage.',
+      text: 'Hostile lands Strike for 5 physical damage.',
       subject: 'c1',
       detail: { kind: 'strike', actorId: 'c1', targetId: 'c2', damage: 5 },
     }
@@ -36,7 +43,7 @@ describe('expandBroadcastRows', () => {
     expect(rows.some((r) => r.subject === 'c2' && r.voice === 'actor')).toBe(true)
   })
 
-  it('adds actor banter for the human on their turn and when they strike', () => {
+  it('adds actor banter for the human on their turn and when they land Strike', () => {
     const game = minimalGame()
     const turnRows = expandBroadcastRows(
       { text: '', detail: { kind: 'turn', actorId: 'h' } },
@@ -125,16 +132,16 @@ describe('expandBroadcastRows', () => {
     expect(rows[0]!.text.toLowerCase()).toMatch(/first blood|blood on the board/)
   })
 
-  it('uses second-person human banter on human turn', () => {
+  it('uses first-person human banter on human turn', () => {
     const game = minimalGame()
     const rows = expandBroadcastRows({ text: '', detail: { kind: 'turn', actorId: 'h' } }, game, 0)
     const humanRow = rows.find((r) => r.subject === 'h' && r.banter)
     expect(humanRow).toBeDefined()
     expect(
       new Set([
-        'Your move — own the clock.',
-        'Board is yours — tempo time.',
-        'You are up — make it count.',
+        'My turn — make it count.',
+        'Clock is mine.',
+        'Up — own the board.',
       ]).has(humanRow!.text),
     ).toBe(true)
   })

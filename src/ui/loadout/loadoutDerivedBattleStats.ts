@@ -2,13 +2,16 @@ import type { TraitPoints } from '../../game/types'
 import { getSkillDef } from '../../game/skills'
 import {
   BASE_MAX_HP,
+  bonusMaxManaFromBattleLevel,
+  bonusMaxStaminaFromBattleLevel,
+  bonusStaminaRegenFromBattleLevel,
   buildBleedingTag,
   buildSlowTag,
   DAMAGE_PER_STRENGTH,
   HP_PER_VITALITY,
   MANA_PER_WISDOM,
   maxStaminaForTraits,
-  physicalOffenseDamagePerHit,
+  physicalOffenseRawTotalBeforeFortitude,
   STAMINA_BASE_MAX,
   STAMINA_MAX_PER_AGILITY,
   STAMINA_REGEN_PER_TURN,
@@ -37,14 +40,21 @@ const ELEM_RESIST_LEGEND = '+1/pt vs matching skills; min 1'
  */
 export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): DerivedBattleStatGroup[] {
   const moveSteps = 1 + traits.agility
-  const maxStamina = maxStaminaForTraits(traits)
+  const maxStamina = maxStaminaForTraits(traits) + bonusMaxStaminaFromBattleLevel(level)
+  const stamRegen = STAMINA_REGEN_PER_TURN + bonusStaminaRegenFromBattleLevel(level)
   const manaRegen = 1 + traits.intelligence
   const maxHp = BASE_MAX_HP + traits.vitality * HP_PER_VITALITY
-  const maxMana = level + traits.wisdom * MANA_PER_WISDOM
+  const maxMana = level + traits.wisdom * MANA_PER_WISDOM + bonusMaxManaFromBattleLevel(level)
   const strikeBase = strikeDamage(traits.strength)
   const physicalTempoPreview = totalStrikeDamage(traits, 0, 0)
   const physicalRhythmSecondHit = totalStrikeDamage(traits, 0, 1)
-  const splinterPerHit = physicalOffenseDamagePerHit(getSkillDef('splinter').baseDamage, traits, 0, 0)
+  const splinterPerHit = physicalOffenseRawTotalBeforeFortitude(
+    getSkillDef('splinter').baseDamage,
+    traits,
+    0,
+    0,
+    1,
+  )
   const reachBonus = Math.floor(traits.arcaneReach / 2)
   const bleedTag = buildBleedingTag(traits.bleedBonus, traits.statusPotency)
   const bleedLine =
@@ -68,8 +78,8 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
         },
         {
           label: 'Stamina / turn start',
-          value: String(STAMINA_REGEN_PER_TURN),
-          perPoint: null,
+          value: String(stamRegen),
+          perPoint: level >= 25 ? '+1 vs L24 (level band)' : 'Higher bands add +1 at L25+',
         },
       ],
     },
@@ -84,7 +94,7 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
         {
           label: 'Max mana',
           value: String(maxMana),
-          perPoint: `+${MANA_PER_WISDOM}/Wisdom (beyond level ${level})`,
+          perPoint: `+${MANA_PER_WISDOM}/Wisdom · +level · extra at L25/L50 (bands)`,
         },
         {
           label: 'Max HP',
@@ -112,14 +122,14 @@ export function deriveLoadoutBattleStats(traits: TraitPoints, level: number): De
       title: 'Physical damage skills (before their mitigations)',
       rows: [
         {
-          label: 'Strike base (2 + Strength)',
+          label: 'Strike skill base (2 + Strength)',
           value: String(strikeBase),
           perPoint: `+${DAMAGE_PER_STRENGTH}/Strength on each physical hit (skill base + STR)`,
         },
         {
-          label: 'Splinter / hit (example)',
+          label: 'Splinter 1× on target (example)',
           value: String(splinterPerHit),
-          perPoint: 'Same Strength, tempo, rhythm as Strike; skill base differs',
+          perPoint: 'Strength applies once per target per cast; tempo/rhythm still per hit',
         },
         {
           label: 'Physical tempo (≤1 tile moved)',

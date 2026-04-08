@@ -68,7 +68,7 @@ export const statusReference: { id: StatusRefId; label: string; description: str
   {
     id: 'silenced',
     label: 'Silenced',
-    description: 'Cannot cast magic. Disrupt removes silence when shocked.',
+    description: 'Cannot cast elemental magic skills. Disrupt removes silence when shocked.',
   },
   {
     id: 'disarmed',

@@ -17,6 +17,13 @@ function minimalGame(overrides: Partial<GameState> = {}): GameState {
     teamByActor: { h: 0, c1: 1 },
     humanActorId: 'h',
     cpuDifficulty: {},
+    casterTone: 'classic_arena',
+    fullRoundsCompleted: 0,
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+    overtime: null,
+    tie: false,
+    lastHpDamageFrom: {},
     ...overrides,
   } as GameState
 }

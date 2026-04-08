@@ -57,7 +57,7 @@ export interface TraitPoints {
   physicalSlow: number
   /** Bonus damage on physical damage skills if you moved ≤1 tile this turn. */
   physicalTempo: number
-  /** Bonus on every 2nd consecutive physical offense (Strike or physical damage skill); move or magic breaks the chain. */
+  /** Bonus on every 2nd consecutive physical offense (any physical damage skill); move or magic breaks the chain. */
   physicalRhythm: number
   /** +max HP per point (see traits.ts HP_PER_VITALITY). */
   vitality: number
@@ -107,7 +107,14 @@ export interface ActorState {
   tilesMovedThisTurn: number
   /** Consecutive physical offense casts without a reset (move or magic cast); utility physical does not change this. */
   physicalStreak: number
+  /**
+   * Level used for this fighter’s loadout validation, max mana formula, and high-level combat pool bands.
+   * Usually equals match {@link BattleConfig.level}; challenge CPUs may use a higher value.
+   */
+  combatLevel: number
   statuses: StatusInstance[]
+  /** From roster; selects richer CPU banter pools in broadcast mode. */
+  personality?: CombatVoicePersonality
 }
 
 export type SkillId =
@@ -148,6 +155,49 @@ export interface TileImpact {
 export type MatchMode = 'teams' | 'ffa'
 
 export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
+
+/** Broadcast log: fighter barks — keys phrase tables in `broadcastLog.ts`. */
+export type CombatVoicePersonality =
+  | 'stoic'
+  | 'snarky'
+  | 'hot_headed'
+  | 'tactical'
+  | 'unhinged'
+  | 'grim'
+  | 'cocky'
+
+/** Caster (announcer) phrase set for broadcast mode. */
+export type CasterToneId =
+  | 'classic_arena'
+  | 'grim_war_report'
+  | 'snarky_desk'
+  | 'arcane_showman'
+  | 'cold_analyst'
+
+/** Who took damage relative to the attacker — for friendly-fire-aware copy. */
+export type HitRelation = 'self' | 'ally' | 'enemy'
+
+/** Logged when a legal action attempt fails (broadcast-first; classic often hidden). */
+export type ActionDeniedReason =
+  | 'mana'
+  | 'stamina'
+  | 'move_stamina'
+  | 'range'
+  | 'silenced'
+  | 'disarmed'
+  | 'rooted'
+  | 'frozen'
+  | 'game_over'
+  | 'wrong_turn'
+  | 'out_of_bounds'
+  | 'cell_occupied'
+  | 'destination_unreachable'
+  | 'invalid_action_type'
+  | 'skill_not_in_loadout'
+  | 'invalid_cast_target'
+  | 'pattern_out_of_bounds'
+  | 'pattern_aoe_exceeded'
+  | 'unsupported_utility'
 
 /** Visual palette slot for board tokens and UI (maps to CSS `t0`–`t7`). */
 export type TeamColorSlot = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -200,6 +250,10 @@ export type BattleLogDetail =
       targetHpAfter?: number
       targetMaxHp?: number
       killed?: boolean
+      /** Damage absorbed by shield before HP. */
+      shieldAbsorbed?: number
+      /** Orthogonal adjacent opponents when the Strike skill hit landed (broadcast flavor). */
+      positionalContext?: 'flanked' | 'surrounded'
     }
   | { kind: 'lifesteal'; actorId: ActorId; amount: number }
   | {
@@ -253,6 +307,14 @@ export type BattleLogDetail =
       targets: { targetId: ActorId; manaRestored: number; slowTurns: number }[]
     }
   | { kind: 'cast_linger'; skillId: SkillId; actorId: ActorId; manaCost: number }
+  /** Damage skill found no valid targets (e.g. whiffed Strike); not a lingering tile cast. */
+  | {
+      kind: 'offensive_whiff'
+      skillId: SkillId
+      actorId: ActorId
+      manaCost: number
+      resource: 'mana' | 'stamina'
+    }
   | {
       kind: 'cast_damage'
       skillId: SkillId
@@ -261,8 +323,15 @@ export type BattleLogDetail =
       manaCost: number
       targetCount: number
       /** Per target after damage — for broadcast clutch / multi-hit narration. */
-      hitSnapshots?: { targetId: ActorId; hpAfter: number; maxHp: number }[]
+      hitSnapshots?: {
+        targetId: ActorId
+        hpAfter: number
+        maxHp: number
+        relation?: HitRelation
+        shieldAbsorbed?: number
+      }[]
     }
+  | { kind: 'action_denied'; actorId: ActorId; reason: ActionDeniedReason }
   | {
       kind: 'residual_trigger'
       skillId: SkillId
@@ -271,6 +340,7 @@ export type BattleLogDetail =
       victimHpAfter?: number
       victimMaxHp?: number
       killed?: boolean
+      shieldAbsorbed?: number
     }
   | { kind: 'status_reaction'; reactionKey: StatusReactionKey; targetId: ActorId }
   | { kind: 'frozen_skip'; actorId: ActorId }
@@ -279,6 +349,14 @@ export type BattleLogDetail =
   | { kind: 'resource_tick'; actorId: ActorId; manaGained: number; staminaGained: number }
   | { kind: 'knockback'; attackerId: ActorId; targetId: ActorId }
   | { kind: 'battle_milestone'; milestone: 'first_blood'; victimId: ActorId }
+  | {
+      kind: 'battle_milestone'
+      milestone: 'kill_steal'
+      killerId: ActorId
+      victimId: ActorId
+      /** Actor who dealt HP damage to the victim before the killing blow. */
+      creditedDamagerId: ActorId
+    }
   | { kind: 'cpu_thinking'; actorId: ActorId }
   | {
       kind: 'cpu_situational'
@@ -377,6 +455,10 @@ export interface GameState {
   overtime: OvertimeState | null
   /** Everyone eliminated at once (e.g. same storm tick). */
   tie: boolean
+  /** Copied from match settings; broadcast caster phrase tables. */
+  casterTone: CasterToneId
+  /** Last actor who dealt HP damage (after shield) to each victim; used for kill-credit flavor. */
+  lastHpDamageFrom: Partial<Record<ActorId, ActorId>>
 }
 
 /** Offset from the cast target cell; duplicates mean that cell is hit multiple times (extra damage). */
@@ -426,6 +508,12 @@ export interface MatchRosterEntry {
   traits: TraitPoints
   isHuman: boolean
   displayName?: string
+  /**
+   * When set, {@link ActorState.combatLevel} and starting mana bands use this instead of the match’s top-level `level`.
+   */
+  loadoutLevel?: number
+  /** Optional: CPU battle-log banter personality (human may omit). */
+  personality?: CombatVoicePersonality
 }
 
 /** Canonical match definition (roster-first). */
@@ -444,6 +532,8 @@ export interface MatchSettings {
    * Defaults to `clamp(teamId, 0, 7)` when absent or for a team with no entry.
    */
   teamColorSlotByTeamId?: Partial<Record<number, TeamColorSlot>>
+  /** Broadcast announcer voice; default `classic_arena`. */
+  casterTone?: CasterToneId
   /**
    * When true, sudden death activates after `roundsUntilOvertime` full rounds.
    * Default false for existing matches / tests.
@@ -470,6 +560,11 @@ export interface LegacyMatchSettings {
 
 export interface BattleConfig {
   level: number
+  /**
+   * Challenge: CPU roster builds and their combat level use `level + cpuBudgetOffset` (player stays at `level`).
+   * Default 0 (fair duel).
+   */
+  cpuBudgetOffset?: number
   playerLoadout: SkillLoadoutEntry[]
   /** First enemy loadout template (legacy + CPU slot in presets). */
   cpuLoadout: SkillLoadoutEntry[]

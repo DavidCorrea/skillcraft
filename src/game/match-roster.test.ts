@@ -196,6 +196,29 @@ describe('buildCustomMatchSettings', () => {
     ).toThrow()
   })
 
+  it('sets humanPersonality on the human roster row when provided', () => {
+    const ms = buildCustomMatchSettings({
+      humanLoadout: emptyLoadout,
+      humanTraits: traits,
+      cpuBuilds: [{ loadout: emptyLoadout, traits }],
+      teamIds: [0, 1],
+      defaultCpuDifficulty: 'normal',
+      humanPersonality: 'snarky',
+    })
+    expect(ms.roster.find((r) => r.isHuman)?.personality).toBe('snarky')
+  })
+
+  it('does not set personality on human row when humanPersonality is omitted', () => {
+    const ms = buildCustomMatchSettings({
+      humanLoadout: emptyLoadout,
+      humanTraits: traits,
+      cpuBuilds: [{ loadout: emptyLoadout, traits }],
+      teamIds: [0, 1],
+      defaultCpuDifficulty: 'normal',
+    })
+    expect(ms.roster.find((r) => r.isHuman)?.personality).toBeUndefined()
+  })
+
   it('maps per-cpu difficulties when cpuDifficulties is provided', () => {
     const ms = buildCustomMatchSettings({
       humanLoadout: emptyLoadout,

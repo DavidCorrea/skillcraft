@@ -7,7 +7,9 @@ import {
   computeTurnStartTick,
   castReachableAnchors,
   createInitialState,
+  hitRelation,
   legalCasts,
+  legalMoves,
   resetIdsForTests,
 } from './engine'
 import type { BattleConfig, MatchSettings } from './types'
@@ -96,6 +98,8 @@ describe('applyAction', () => {
     const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
     const r = applyAction(s, TID.cpu, { type: 'move', to: { x: 3, y: 1 } })
     expect(r.error).toBe('Not your turn.')
+    const last = r.state!.log.at(-1)
+    expect(last?.detail).toEqual({ kind: 'action_denied', actorId: TID.cpu, reason: 'wrong_turn' })
   })
 
   it('rejects strike cast when anchor is out of melee range', () => {
@@ -175,6 +179,105 @@ describe('applyAction', () => {
     expect(s.actors[TID.human]!.statuses.some((x) => x.tag.t === 'skillFocus')).toBe(false)
     const dmg = cpuHpBefore - s.actors[TID.cpu]!.hp
     expect(dmg).toBeGreaterThanOrEqual(1 + focusBonusDamage(1, 0))
+  })
+
+  it('logs strike shield absorption on the strike detail', () => {
+    resetIdsForTests()
+    const s0 = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const s = {
+      ...s0,
+      actors: {
+        ...s0.actors,
+        [TID.human]: { ...s0.actors[TID.human]!, pos: { x: 3, y: 5 } },
+        [TID.cpu]: {
+          ...s0.actors[TID.cpu]!,
+          pos: { x: 3, y: 4 },
+          statuses: [{ id: 'sh1', tag: { t: 'shield', amount: 5 } }],
+        },
+      },
+    }
+    const r = applyAction(s, TID.human, { type: 'cast', skillId: 'strike', target: { x: 3, y: 4 } })
+    expect(r.error).toBeUndefined()
+    const strikeLog = r.state!.log.find((l) => l.detail?.kind === 'strike')
+    expect(strikeLog?.detail).toMatchObject({
+      shieldAbsorbed: expect.any(Number),
+    })
+    expect((strikeLog?.detail as { shieldAbsorbed?: number }).shieldAbsorbed).toBeGreaterThan(0)
+  })
+
+  it('logs kill steal when a different actor dealt prior HP damage', () => {
+    resetIdsForTests()
+    const strikeSlot = {
+      skillId: 'strike' as const,
+      pattern: [{ dx: 0, dy: 0 }],
+      statusStacks: 1,
+      costDiscount: 0,
+    }
+    let s = createInitialState(ffaConfig, { randomizeTurnOrder: false })
+    s = {
+      ...s,
+      loadouts: { ...s.loadouts, [TID.human]: [...s.loadouts[TID.human]!, strikeSlot] },
+      actors: {
+        ...s.actors,
+        [TID.human]: { ...s.actors[TID.human]!, pos: { x: 3, y: 3 } },
+        [TID.cpu]: { ...s.actors[TID.cpu]!, pos: { x: 3, y: 1 } },
+        [TID.cpu2]: { ...s.actors[TID.cpu2]!, pos: { x: 3, y: 2 }, hp: 1 },
+        [TID.cpu3]: { ...s.actors[TID.cpu3]!, pos: { x: 0, y: 0 } },
+      },
+      lastHpDamageFrom: { [TID.cpu2]: TID.cpu },
+    }
+    const r = applyAction(s, TID.human, { type: 'cast', skillId: 'strike', target: { x: 3, y: 2 } })
+    expect(r.error).toBeUndefined()
+    const ks = r.state!.log.find(
+      (l) => l.detail?.kind === 'battle_milestone' && l.detail.milestone === 'kill_steal',
+    )
+    expect(ks?.detail).toMatchObject({
+      milestone: 'kill_steal',
+      killerId: TID.human,
+      victimId: TID.cpu2,
+      creditedDamagerId: TID.cpu,
+    })
+  })
+})
+
+describe('chilled movement', () => {
+  it('reduces legal move reach', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const nimble = {
+      ...s.actors[TID.human]!,
+      traits: { ...s.actors[TID.human]!.traits, agility: 2 },
+      moveMaxSteps: 3,
+    }
+    const base = { ...s, actors: { ...s.actors, [TID.human]: nimble } }
+    const cold = {
+      ...base,
+      actors: {
+        ...base.actors,
+        [TID.human]: {
+          ...nimble,
+          statuses: [{ id: 'c', tag: { t: 'chilled', duration: 2 } }],
+        },
+      },
+    }
+    expect(legalMoves(cold, TID.human).length).toBeLessThan(legalMoves(base, TID.human).length)
+  })
+})
+
+describe('combat level bands', () => {
+  it('adds stamina regen on turn tick at L25+', () => {
+    resetIdsForTests()
+    const cfg = duelBattleConfig({
+      level: 25,
+      playerLoadout: sampleConfig.playerLoadout,
+      cpuLoadout: sampleConfig.cpuLoadout,
+      playerTraits: defaultTraitPoints(),
+      cpuTraits: defaultTraitPoints(),
+    })
+    const s = createInitialState(cfg, { randomizeTurnOrder: false })
+    const a = { ...s.actors[TID.human]!, stamina: 0 }
+    const tick = computeTurnStartTick(a)
+    expect(tick.staminaGained).toBe(STAMINA_REGEN_PER_TURN + 1)
   })
 })
 
@@ -282,6 +385,33 @@ describe('residual tile impacts', () => {
     expect(r.error).toBeUndefined()
     expect(r.state!.actors[TID.human]!.hp).toBeLessThan(hpBefore)
     expect(r.state!.log.some((l) => l.text.includes('residual'))).toBe(true)
+  })
+})
+
+describe('hitRelation', () => {
+  it('returns self, enemy, and ally consistently in duel', () => {
+    resetIdsForTests()
+    const s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    expect(hitRelation(s, TID.human, TID.human)).toBe('self')
+    expect(hitRelation(s, TID.human, TID.cpu)).toBe('enemy')
+  })
+})
+
+describe('applyAction — denial log entries', () => {
+  it('appends action_denied when the actor cannot afford mana for a magic cast', () => {
+    resetIdsForTests()
+    let s = createInitialState(sampleConfig, { randomizeTurnOrder: false })
+    const hum = s.actors[TID.human]!
+    s = {
+      ...s,
+      actors: { ...s.actors, [TID.human]: { ...hum, mana: 0 } },
+    }
+    const r = applyAction(s, TID.human, { type: 'cast', skillId: 'ember', target: { x: 8, y: 1 } })
+    expect(r.error).toMatch(/mana/i)
+    expect(r.state?.log.some((e) => e.detail?.kind === 'action_denied')).toBe(true)
+    const denied = r.state?.log.find((e) => e.detail?.kind === 'action_denied')
+    expect(denied?.classicVisible).toBe(true)
+    expect(denied?.text).toMatch(/mana/i)
   })
 })
 

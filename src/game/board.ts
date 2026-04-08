@@ -125,7 +125,7 @@ export function allCells(size: number): Coord[] {
 }
 
 /**
- * Whether `attacker` may damage `target` (strikes, offensive skills, tile hazards).
+ * Whether `attacker` may damage `target` (offensive skills, tile hazards).
  * Always true — any actor may be hit; aim and pattern geometry are the only gates.
  */
 export function canDamageTarget(

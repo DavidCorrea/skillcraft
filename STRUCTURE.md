@@ -22,7 +22,7 @@
 | `engine.ts` | `GameAction`, `applyAction`, `allLegalActions`, turn flow, win checks, combat resolution, sudden-death boundaries |
 | `overtime.ts` | Sudden death: storm geometry, Chebyshev lethal check, damage scaling, activation roll |
 | `skills.ts` | Skill definitions, patterns, mana/damage/status helpers |
-| `traits.ts` | Trait scaling, Strike damage, stamina, defenses |
+| `traits.ts` | Trait scaling, physical offense damage (incl. Strike skill baseline), stamina, defenses |
 | `board.ts` | Grid size, coords, spawn positions, Manhattan distance, targeting helpers |
 | `match-roster.ts` | `normalizeBattleConfig`, legacy presets → roster |
 | `reactions.ts` | Status interactions when tags are applied |

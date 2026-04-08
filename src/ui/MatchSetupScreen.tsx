@@ -1,5 +1,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import type { BattleConfig, CpuDifficulty, TeamColorSlot } from '../game/types'
+import type { BattleConfig, CasterToneId, CombatVoicePersonality, CpuDifficulty, TeamColorSlot } from '../game/types'
+import {
+  CASTER_TONE_OPTIONS,
+  DEFAULT_CASTER_TONE,
+  PERSONALITY_SELECT_OPTIONS,
+  rollVoicePersonality,
+} from '../game/voiceRoll'
 import {
   balancedTeamIdsForSplit,
   buildCustomMatchSettings,
@@ -365,6 +371,11 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
     const [activeTemplate, setActiveTemplate] = useState<TemplateId | ''>('champions_circle')
     const [overtimeEnabled, setOvertimeEnabled] = useState(false)
     const [roundsUntilOvertime, setRoundsUntilOvertime] = useState(12)
+    /** 0 = fair duel (CPU budget = your level); &gt;0 = challenge (CPU loadout + combat pools). */
+    const [cpuBudgetOffset, setCpuBudgetOffset] = useState(0)
+    const [casterTone, setCasterTone] = useState<CasterToneId>(DEFAULT_CASTER_TONE)
+    /** Empty = generic human broadcast lines; set for first-person personality banter. */
+    const [humanPersonality, setHumanPersonality] = useState<'' | CombatVoicePersonality>('')
 
     const onValidityChangeRef = useRef(onValidityChange)
     onValidityChangeRef.current = onValidityChange
@@ -430,6 +441,7 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
       setBoardOverride(s.boardOverride)
       setOvertimeEnabled(s.overtimeEnabled)
       setRoundsUntilOvertime(s.roundsUntilOvertime)
+      setCpuBudgetOffset(0)
       setTeamColorSlotByTeamId({})
       setActiveTemplate(id)
     }
@@ -442,6 +454,8 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
       const level = draft.level
       const err = validateCustomTeamIds(teamIds)
       if (err) return null
+      const offset = Math.max(0, Math.min(40, Math.floor(cpuBudgetOffset)))
+      const cpuLevel = level + offset
       const cpuBuilds = []
       const nCpuLocal = teamIds.length - 1
       const diffs =
@@ -449,8 +463,13 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
           ? cpuDifficulties
           : growCpuDifficulties(cpuDifficulties, nCpuLocal)
       for (let i = 0; i < nCpuLocal; i++) {
-        const b = randomCpuBuild(level, diffs[i] ?? 'normal')
-        cpuBuilds.push({ loadout: b.cpuLoadout, traits: b.cpuTraits })
+        const b = randomCpuBuild(cpuLevel, diffs[i] ?? 'normal')
+        cpuBuilds.push({
+          loadout: b.cpuLoadout,
+          traits: b.cpuTraits,
+          loadoutLevel: cpuLevel,
+          personality: rollVoicePersonality(),
+        })
       }
       const colorKeys = Object.keys(teamColorSlotByTeamId)
       const match = buildCustomMatchSettings({
@@ -468,10 +487,13 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
               roundsUntilOvertime: Math.max(1, Math.min(99, Math.round(roundsUntilOvertime))),
             }
           : {}),
+        casterTone,
+        ...(humanPersonality !== '' ? { humanPersonality } : {}),
       })
       const first = cpuBuilds[0]!
       return {
         level,
+        ...(offset > 0 ? { cpuBudgetOffset: offset } : {}),
         playerLoadout: draft.playerLoadout,
         playerTraits: draft.playerTraits,
         cpuLoadout: first.loadout,
@@ -488,6 +510,9 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
       boardSizeParsed,
       overtimeEnabled,
       roundsUntilOvertime,
+      cpuBudgetOffset,
+      casterTone,
+      humanPersonality,
     ])
 
     useImperativeHandle(
@@ -606,6 +631,26 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
             ) : (
               <p className="ls-custom-hint">Set each CPU tier in the roster.</p>
             )}
+            <div className="ls-field">
+              <span>CPU level offset</span>
+              <NumberStepper
+                variant="field"
+                min={0}
+                max={40}
+                value={cpuBudgetOffset}
+                onValueChange={(n) => {
+                  setCpuBudgetOffset(n)
+                  markCustomized()
+                }}
+                aria-label="CPU level offset for loadout and combat pools"
+              />
+              <p className="ls-custom-hint">
+                {cpuBudgetOffset === 0
+                  ? 'Fair: CPUs roll at your level.'
+                  : `Challenge: CPUs use level ${draft.level + cpuBudgetOffset} (you stay ${draft.level}).`}
+              </p>
+            </div>
+
             {nCpu > 1 ? (
               <button
                 type="button"
@@ -783,6 +828,45 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
                 onChange={(e) => setBoardOverride(e.target.value)}
                 aria-label="Board size override"
               />
+            </label>
+
+            <label className="ls-field">
+              <span>Caster tone (broadcast)</span>
+              <select
+                className="ls-select"
+                value={casterTone}
+                onChange={(e) => {
+                  setCasterTone(e.target.value as CasterToneId)
+                  markCustomized()
+                }}
+                aria-label="Caster broadcast tone"
+              >
+                {CASTER_TONE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="ls-field">
+              <span>Your fighter voice (broadcast)</span>
+              <select
+                className="ls-select"
+                value={humanPersonality}
+                onChange={(e) => {
+                  setHumanPersonality(e.target.value as '' | CombatVoicePersonality)
+                  markCustomized()
+                }}
+                aria-label="Human fighter banter personality"
+              >
+                <option value="">Default (generic lines)</option>
+                {PERSONALITY_SELECT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <div className="ls-field" aria-label="Sudden death overtime">

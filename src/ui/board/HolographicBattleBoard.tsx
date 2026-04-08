@@ -1,16 +1,25 @@
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { ActorId, Coord, TeamColorSlot } from '../../game/types'
-import { coordKey } from '../../game/board'
-import { cellCenterNormalized, HOLO_GRID_GAP_FRACTION, pathLinesD } from './geometry'
-import type { BoardFxState } from './fx'
+import type { ActorId, Coord, GameState, SkillId, TeamColorSlot } from '../../game/types'
+import { coordKey, parseKey } from '../../game/board'
+import {
+  cellCenterNormalized,
+  HOLO_GRID_GAP_FRACTION,
+  measureHoloBoardGapFraction,
+  pathLinesD,
+  pieceAnchorNormalized,
+  speechBubbleTopNormalized,
+} from './geometry'
+import { patternCellsForCast, type BoardFxState } from './fx'
 import './holographic-board.css'
 
 export type BoardPiece = {
@@ -36,8 +45,6 @@ export interface HolographicBattleBoardProps {
   cells: Coord[]
   getCellClassSuffix: (c: Coord) => string
   onCellClick: (c: Coord) => void
-  hoveredKey: string | null
-  onHoverChange: (key: string | null) => void
   pulseKey: string | null
   pathFrom: Coord | null
   pathTos: Coord[]
@@ -45,8 +52,12 @@ export interface HolographicBattleBoardProps {
   /** Hide in-cell token while overlay animates this actor's move. */
   hiddenPieceActor: ActorId | null
   boardFx: BoardFxState | null
-  /** Cast mode: pattern preview while hovering a reachable anchor. */
-  previewPatternKeys: Set<string> | null
+  /** Cast preview: anchored skill (null = no preview layer). */
+  castPreviewSkillId: SkillId | null
+  /** Reachable anchor keys for `castPreviewSkillId` (from parent). */
+  highlightCastReach: ReadonlySet<string>
+  game: GameState
+  humanActorId: ActorId
   /** `data-cast-element` on scene during offensive cast resolve. */
   sceneCastElement: string | null
   /** Hover/focus tooltip when cell has actors and/or a lingering hazard. */
@@ -79,6 +90,7 @@ function MoveOverlayPiece({
   extraClass,
   youMarker,
   size,
+  gapFraction,
 }: {
   teamSlot: TeamColorSlot
   from: Coord
@@ -86,6 +98,7 @@ function MoveOverlayPiece({
   extraClass: string
   youMarker?: boolean
   size: number
+  gapFraction: number
 }) {
   const [pos, setPos] = useState(from)
   useEffect(() => {
@@ -93,7 +106,7 @@ function MoveOverlayPiece({
     return () => cancelAnimationFrame(id)
   }, [from, to])
 
-  const p = cellCenterNormalized(pos, size, HOLO_GRID_GAP_FRACTION)
+  const p = cellCenterNormalized(pos, size, gapFraction)
   const base = pieceBaseClass(teamSlot)
   return (
     <span
@@ -115,31 +128,119 @@ function MoveOverlayPiece({
   )
 }
 
-export function HolographicBattleBoard({
+/** One stack per actor+cell: flex column so multiple lines get real vertical gap (no fixed em overlap). */
+function SpeechBubbleStack({
+  bubbles,
+  size,
+  anchorPos,
+  moveFrom,
+  moveTo,
+  pieceIndex,
+  piecesInCell,
+  gapFraction,
+}: {
+  bubbles: BattleSpeechBubble[]
+  size: number
+  anchorPos: Coord
+  moveFrom: Coord | null
+  moveTo: Coord | null
+  pieceIndex: number
+  piecesInCell: number
+  gapFraction: number
+}) {
+  const isMoving = moveFrom !== null && moveTo !== null
+  const [pos, setPos] = useState<Coord>(anchorPos)
+
+  useEffect(() => {
+    if (moveFrom && moveTo) {
+      setPos(moveFrom)
+      const id = requestAnimationFrame(() => setPos(moveTo))
+      return () => cancelAnimationFrame(id)
+    }
+    setPos(anchorPos)
+  }, [moveFrom?.x, moveFrom?.y, moveTo?.x, moveTo?.y, anchorPos.x, anchorPos.y])
+
+  const center = isMoving
+    ? cellCenterNormalized(pos, size, gapFraction)
+    : pieceAnchorNormalized(pos, size, gapFraction, pieceIndex, piecesInCell)
+  const topFrac = speechBubbleTopNormalized(center.ny, size, gapFraction)
+  return (
+    <div
+      className="holo-speech-stack"
+      style={{
+        left: `${center.nx * 100}%`,
+        top: `${topFrac * 100}%`,
+        transform: 'translateX(-50%) translateY(-100%)',
+        zIndex: 11 + bubbles.length,
+        ...(isMoving
+          ? {
+              transition:
+                'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.28s cubic-bezier(0.22, 1, 0.36, 1)',
+            }
+          : {}),
+      }}
+    >
+      {bubbles.map((b) => (
+        <div key={b.id} className={`holo-speech-bubble holo-speech-bubble--t${b.teamSlot}`}>
+          {b.text}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export const HolographicBattleBoard = memo(function HolographicBattleBoard({
   size,
   cells,
   getCellClassSuffix,
   onCellClick,
-  hoveredKey,
-  onHoverChange,
   pulseKey,
   pathFrom,
   pathTos,
   pieces,
   hiddenPieceActor,
   boardFx,
-  previewPatternKeys,
+  castPreviewSkillId,
+  highlightCastReach,
+  game,
+  humanActorId,
   sceneCastElement,
   getCellTooltip,
   playerHintColor,
   speechBubbles,
 }: HolographicBattleBoardProps) {
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [layoutGapFraction, setLayoutGapFraction] = useState(HOLO_GRID_GAP_FRACTION)
+
+  const previewPatternKeys = useMemo(() => {
+    if (!castPreviewSkillId || !hoveredKey) return null
+    if (!highlightCastReach.has(hoveredKey)) return null
+    const anchor = parseKey(hoveredKey)
+    const cellsPattern = patternCellsForCast(game, humanActorId, castPreviewSkillId, anchor)
+    if (!cellsPattern) return null
+    return new Set(cellsPattern.map(coordKey))
+  }, [castPreviewSkillId, highlightCastReach, hoveredKey, game, humanActorId])
+
+  useLayoutEffect(() => {
+    const el = boardRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const sync = () => {
+      const m = measureHoloBoardGapFraction(el)
+      setLayoutGapFraction(m ?? HOLO_GRID_GAP_FRACTION)
+    }
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [size])
+
   const pathD = useMemo(
     () =>
       pathFrom && pathTos.length > 0
-        ? pathLinesD(pathFrom, pathTos, size, HOLO_GRID_GAP_FRACTION)
+        ? pathLinesD(pathFrom, pathTos, size, layoutGapFraction)
         : '',
-    [pathFrom, pathTos, size],
+    [pathFrom, pathTos, size, layoutGapFraction],
   )
 
   const centerKey = coordKey({ x: Math.floor(size / 2), y: Math.floor(size / 2) })
@@ -149,6 +250,18 @@ export function HolographicBattleBoard({
     for (const p of pieces) m.set(p.id, p.pos)
     return m
   }, [pieces])
+
+  const piecesByCellKey = useMemo(() => {
+    const m = new Map<string, BoardPiece[]>()
+    for (const p of pieces) {
+      if (hiddenPieceActor === p.id) continue
+      const k = coordKey(p.pos)
+      const cur = m.get(k)
+      if (cur) cur.push(p)
+      else m.set(k, [p])
+    }
+    return m
+  }, [pieces, hiddenPieceActor])
 
   const strikeLunge =
     boardFx?.kind === 'strike'
@@ -164,32 +277,54 @@ export function HolographicBattleBoard({
         })()
       : null
 
-  const speechBubbleLayout = useMemo(() => {
+  const speechBubbleGroups = useMemo(() => {
     if (!speechBubbles?.length) return []
-    const stacks = new Map<string, number>()
-    const out: {
-      id: string
-      nx: number
-      ny: number
-      stack: number
-      text: string
-      teamSlot: TeamColorSlot
-    }[] = []
+    const move = boardFx?.kind === 'move' ? boardFx : null
+    const order: string[] = []
+    const groups = new Map<
+      string,
+      {
+        bubbles: BattleSpeechBubble[]
+        anchorPos: Coord
+        moveFrom: Coord | null
+        moveTo: Coord | null
+        pieceIndex: number
+        piecesInCell: number
+      }
+    >()
     for (const b of speechBubbles) {
       const pos = posById.get(b.actorId)
       if (!pos) continue
-      const k = coordKey(pos)
-      const stack = stacks.get(k) ?? 0
-      stacks.set(k, stack + 1)
-      const p = cellCenterNormalized(pos, size, HOLO_GRID_GAP_FRACTION)
-      out.push({ id: b.id, nx: p.nx, ny: p.ny, stack, text: b.text, teamSlot: b.teamSlot })
+      const moving = move !== null && move.actor === b.actorId
+      const stackKey = `${coordKey(moving ? move.from : pos)}:${b.actorId}`
+      let g = groups.get(stackKey)
+      if (!g) {
+        const atCell = piecesByCellKey.get(coordKey(pos)) ?? []
+        let pieceIndex = atCell.findIndex((p) => p.id === b.actorId)
+        if (pieceIndex < 0) pieceIndex = 0
+        const piecesInCell = Math.max(1, atCell.length)
+        g = {
+          bubbles: [],
+          anchorPos: pos,
+          moveFrom: moving ? move.from : null,
+          moveTo: moving ? move.to : null,
+          pieceIndex,
+          piecesInCell,
+        }
+        groups.set(stackKey, g)
+        order.push(stackKey)
+      }
+      g.bubbles.push(b)
     }
-    return out
-  }, [speechBubbles, posById, size])
+    return order.map((k) => ({ groupKey: k, ...groups.get(k)! }))
+  }, [speechBubbles, posById, boardFx, piecesByCellKey])
 
   const sceneStyle: CSSProperties | undefined = playerHintColor
     ? { ['--holo-player-hint' as string]: playerHintColor }
     : undefined
+
+  const moveOverlayPiece =
+    boardFx?.kind === 'move' ? pieces.find((x) => x.id === boardFx.actor) : undefined
 
   const sceneRef = useRef<HTMLDivElement>(null)
   const tiltRef = useRef<HTMLDivElement>(null)
@@ -264,12 +399,13 @@ export function HolographicBattleBoard({
         <div className="holo-frame" aria-hidden />
 
         <div
+          ref={boardRef}
           className="holo-board"
           style={{
             gridTemplateColumns: `repeat(${size}, 1fr)`,
             gridTemplateRows: `repeat(${size}, 1fr)`,
           }}
-          onMouseLeave={() => onHoverChange(null)}
+          onMouseLeave={() => setHoveredKey(null)}
         >
         <svg className="holo-board__paths" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden>
           {pathD ? <path d={pathD} pathLength={1} /> : null}
@@ -280,15 +416,13 @@ export function HolographicBattleBoard({
         {boardFx?.kind === 'move' ? (
           <div className="holo-board__overlay" aria-hidden>
             <MoveOverlayPiece
-              teamSlot={
-                pieces.find((x) => x.id === boardFx.actor)?.teamSlot ??
-                clampTeamSlot(0)
-              }
+              teamSlot={moveOverlayPiece?.teamSlot ?? clampTeamSlot(0)}
               from={boardFx.from}
               to={boardFx.to}
               size={size}
-              extraClass={pieces.find((x) => x.id === boardFx.actor)?.extraClass ?? ''}
-              youMarker={pieces.find((x) => x.id === boardFx.actor)?.youMarker}
+              gapFraction={layoutGapFraction}
+              extraClass={moveOverlayPiece?.extraClass ?? ''}
+              youMarker={moveOverlayPiece?.youMarker}
             />
           </div>
         ) : null}
@@ -299,7 +433,7 @@ export function HolographicBattleBoard({
           const isHovered = hoveredKey === k
           const isPulse = pulseKey === k
           const isCenter = k === centerKey
-          const here = pieces.filter((p) => coordKey(p.pos) === k && hiddenPieceActor !== p.id)
+          const here = piecesByCellKey.get(k) ?? []
           const overlap = here.length > 1
 
           let cls = 'holo-cell'
@@ -345,7 +479,7 @@ export function HolographicBattleBoard({
                   : undefined
               }
               onClick={() => onCellClick(c)}
-              onMouseEnter={() => onHoverChange(k)}
+              onMouseEnter={() => setHoveredKey(k)}
               aria-label={ariaLabel}
             >
               {tooltip !== null ? (
@@ -384,22 +518,20 @@ export function HolographicBattleBoard({
           )
         })}
 
-        {speechBubbleLayout.length > 0 ? (
+        {speechBubbleGroups.length > 0 ? (
           <div className="holo-board__overlay holo-board__speech-overlay" aria-hidden>
-            {speechBubbleLayout.map((b) => (
-              <div
-                key={b.id}
-                className={`holo-speech-bubble holo-speech-bubble--t${b.teamSlot}`}
-                style={{
-                  position: 'absolute',
-                  left: `${b.nx * 100}%`,
-                  top: `${b.ny * 100}%`,
-                  transform: `translate(-50%, calc(-100% - ${6 + b.stack * 12}px))`,
-                  zIndex: 9,
-                }}
-              >
-                {b.text}
-              </div>
+            {speechBubbleGroups.map((g) => (
+              <SpeechBubbleStack
+                key={g.groupKey}
+                bubbles={g.bubbles}
+                size={size}
+                anchorPos={g.anchorPos}
+                moveFrom={g.moveFrom}
+                moveTo={g.moveTo}
+                pieceIndex={g.pieceIndex}
+                piecesInCell={g.piecesInCell}
+                gapFraction={layoutGapFraction}
+              />
             ))}
           </div>
         ) : null}
@@ -407,4 +539,4 @@ export function HolographicBattleBoard({
       </div>
     </div>
   )
-}
+})

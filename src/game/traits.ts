@@ -11,6 +11,29 @@ export function maxStaminaForTraits(t: TraitPoints): number {
   return STAMINA_BASE_MAX + t.agility * STAMINA_MAX_PER_AGILITY
 }
 
+/** Extra max mana from high loadout tiers (decoupled curve on top of `level + wisdom`). */
+export function bonusMaxManaFromBattleLevel(level: number): number {
+  const L = Math.max(1, Math.floor(level))
+  if (L >= 50) return 5
+  if (L >= 25) return 2
+  return 0
+}
+
+/** Extra max stamina pool at the same bands as {@link bonusMaxManaFromBattleLevel}. */
+export function bonusMaxStaminaFromBattleLevel(level: number): number {
+  const L = Math.max(1, Math.floor(level))
+  if (L >= 50) return 2
+  if (L >= 25) return 1
+  return 0
+}
+
+/** Extra stamina regen per turn start at the same bands (parallel to mana fantasy). */
+export function bonusStaminaRegenFromBattleLevel(level: number): number {
+  const L = Math.max(1, Math.floor(level))
+  if (L >= 25) return 1
+  return 0
+}
+
 /** CPU PvE scaling: fixed 7-point skill budget; rest into mobility/survival. */
 export function cpuTraitsForLevel(level: number): TraitPoints {
   const t = defaultTraitPoints()
@@ -141,6 +164,7 @@ export const MANA_PER_WISDOM = 1
 export const STRIKE_BASE_DAMAGE = 2
 export const DAMAGE_PER_STRENGTH = 2
 
+/** Per-hit damage for the **Strike** skill before tempo/rhythm (STRIKE_BASE_DAMAGE + Strength scaling). */
 export function strikeDamage(strength: number): number {
   return Math.max(1, STRIKE_BASE_DAMAGE + strength * DAMAGE_PER_STRENGTH)
 }
@@ -163,14 +187,34 @@ export function physicalOffenseDamagePerHit(
   return Math.max(1, n)
 }
 
+/**
+ * Physical offense damage before fortitude: Strength applies once per target per cast; tempo/rhythm still scale per hit.
+ */
+export function physicalOffenseRawTotalBeforeFortitude(
+  skillBaseDamage: number,
+  traits: TraitPoints,
+  tilesMovedThisTurn: number,
+  physicalStreakBefore: number,
+  hitsOnTarget: number,
+): number {
+  const h = Math.max(0, hitsOnTarget)
+  let perHitBonus = 0
+  if (tilesMovedThisTurn <= 1) perHitBonus += traits.physicalTempo
+  const nextStreak = physicalStreakBefore + 1
+  if (nextStreak >= 2 && nextStreak % 2 === 0) perHitBonus += traits.physicalRhythm
+  const perHit = Math.max(1, skillBaseDamage + perHitBonus)
+  const strengthOnce = traits.strength * DAMAGE_PER_STRENGTH
+  return perHit * h + strengthOnce
+}
+
 /** One hit of residual tile damage from a physical skill — Strength only (no tempo / rhythm). */
 export function physicalLingeringHitRaw(skillBaseDamage: number, traits: TraitPoints): number {
   return Math.max(1, skillBaseDamage + traits.strength * DAMAGE_PER_STRENGTH)
 }
 
 /**
- * Total physical Strike damage before defender fortitude mitigation.
- * `physicalStreakBefore` is the attacker’s streak before this Strike lands.
+ * Total damage for one hit of the **Strike** skill (STRIKE_BASE_DAMAGE) before defender fortitude mitigation.
+ * `physicalStreakBefore` is the attacker’s streak before this hit lands.
  */
 export function totalStrikeDamage(
   traits: TraitPoints,

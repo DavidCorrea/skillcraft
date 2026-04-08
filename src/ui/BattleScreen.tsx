@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { ActorId, BattleConfig, Coord, GameState, SkillId, TeamColorSlot } from '../game/types'
-import { coordKey, parseKey } from '../game/board'
+import { coordKey } from '../game/board'
 import {
   applyAction,
   castReachableAnchors,
@@ -51,6 +51,7 @@ const MS = {
   castSelf: 300,
   reject: 200,
   cpuDelay: 400,
+  speechBubble: 2500,
 } as const
 
 const LOG_MODE_KEY = 'skillcraft-battle-log-mode'
@@ -141,7 +142,6 @@ export function BattleScreen({
   const [mode, setMode] = useState<Mode>('idle')
   const [castSkillId, setCastSkillId] = useState<SkillId | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [pulseKey, setPulseKey] = useState<string | null>(null)
 
   const [boardFx, setBoardFx] = useState<BoardFxState | null>(null)
@@ -156,7 +156,10 @@ export function BattleScreen({
       return 'classic'
     }
   })
-  /** `null` = show everyone. Otherwise only rows whose `subject` is in the set (subject-less actor lines still pass). */
+  /**
+   * `null` = all fighters' lines on. Empty set = no fighter-tagged lines (broadcast: caster / neutral only).
+   * Non-empty set = only rows whose `subject` is in the set; rows with no `subject` still pass.
+   */
   const [logActorFilter, setLogActorFilter] = useState<Set<ActorId> | null>(null)
   /** Broadcast only: play-by-play lines (`voice === 'caster'`). */
   const [logShowCaster, setLogShowCaster] = useState(true)
@@ -169,18 +172,25 @@ export function BattleScreen({
   })
   const [speechBubbles, setSpeechBubbles] = useState<BattleSpeechBubble[]>([])
   const prevLogLenRef = useRef(game.log.length)
+  const gameRef = useRef(game)
+  gameRef.current = game
+  const bubbleTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   /** Footer + native tooltip while pointer is over a skill row (your turn). */
   const [hoveredSkillHelpId, setHoveredSkillHelpId] = useState<SkillId | null>(null)
 
   /** CPU worker search window — ring clears when `requestCpuPick` settles, not when board FX end. */
   const [cpuThink, setCpuThink] = useState<{ actorId: ActorId; deadline: number } | null>(null)
-  const [cpuThinkNow, setCpuThinkNow] = useState(0)
 
   const normalizedMatch = useMemo(() => normalizeBattleConfig(config).match, [config])
   const teamSlot = useCallback(
     (teamId: number) => resolveTeamColorSlotForTeamId(teamId, normalizedMatch.teamColorSlotByTeamId),
     [normalizedMatch.teamColorSlotByTeamId],
   )
+
+  const logModeRef = useRef(logMode)
+  logModeRef.current = logMode
+  const teamSlotRef = useRef(teamSlot)
+  teamSlotRef.current = teamSlot
 
   const playerPaletteSlot = useMemo(
     () => teamSlot(game.teamByActor[game.humanActorId] ?? 0),
@@ -192,6 +202,9 @@ export function BattleScreen({
     if (game.turn !== game.humanActorId) setHoveredSkillHelpId(null)
   }, [game.turn, game.humanActorId])
 
+  const logRowsLabelSig = game.turnOrder.map((id) => game.actors[id]?.displayName ?? '').join('\x1e')
+
+  // Not `[game]`: skip when unrelated UI state changes. Label text uses `actorLabelForLog` inputs in deps + `logRowsLabelSig`.
   const classicRows = useMemo(() => {
     const out: { text: string; subject?: ActorId; key: number }[] = []
     game.log.forEach((entry, index) => {
@@ -199,7 +212,8 @@ export function BattleScreen({
       if (row) out.push({ text: row.text, subject: row.subject, key: index })
     })
     return out
-  }, [game])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps narrowed intentionally; see comment above useMemo
+  }, [game.log, game.humanActorId, game.matchMode, game.teamByActor, logRowsLabelSig])
 
   const broadcastLogRows = useMemo(
     () =>
@@ -209,7 +223,8 @@ export function BattleScreen({
           key: `${index}-${j}`,
         })),
       ),
-    [game],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- same as classicRows
+    [game.log, game.turn, game.humanActorId, game.matchMode, game.teamByActor, logRowsLabelSig],
   )
 
   const logRowMatchesActorFilter = useCallback(
@@ -241,11 +256,10 @@ export function BattleScreen({
       if (prev === null) {
         const next = new Set(full)
         next.delete(id)
-        return next.size === 0 ? null : next
+        return next
       }
       const next = new Set(prev)
       if (next.has(id)) {
-        if (next.size <= 1) return prev
         next.delete(id)
       } else {
         next.add(id)
@@ -272,52 +286,54 @@ export function BattleScreen({
   }, [boardBubblesOn])
 
   useEffect(() => {
-    if (!boardBubblesOn) setSpeechBubbles([])
+    if (!boardBubblesOn) {
+      for (const t of bubbleTimersRef.current.values()) window.clearTimeout(t)
+      bubbleTimersRef.current.clear()
+      setSpeechBubbles([])
+    }
   }, [boardBubblesOn])
 
   useEffect(() => {
+    return () => {
+      for (const t of bubbleTimersRef.current.values()) window.clearTimeout(t)
+      bubbleTimersRef.current.clear()
+    }
+  }, [])
+
+  /** New log lines only. `useLayoutEffect` keeps bubbles in the same frame as the log (before paint). */
+  useLayoutEffect(() => {
     const g = gameRef.current
     const len = g.log.length
     if (len < prevLogLenRef.current) {
       prevLogLenRef.current = len
+      for (const t of bubbleTimersRef.current.values()) window.clearTimeout(t)
+      bubbleTimersRef.current.clear()
       setSpeechBubbles([])
       return
     }
     const prev = prevLogLenRef.current
     prevLogLenRef.current = len
     if (!boardBubblesOn || prev >= len) return
-    const candidates = bubbleCandidatesForNewLogEntries(prev, g.log, g, logMode)
+    const candidates = bubbleCandidatesForNewLogEntries(prev, g.log, g, logModeRef.current)
     if (candidates.length === 0) return
+    const slotFn = teamSlotRef.current
     const newBubbles: BattleSpeechBubble[] = candidates.map((c, j) => ({
       id: `${Date.now()}-${j}-${Math.random().toString(36).slice(2, 9)}`,
       actorId: c.actorId,
       text: c.text,
-      teamSlot: teamSlot(g.teamByActor[c.actorId] ?? 0) as TeamColorSlot,
+      teamSlot: slotFn(g.teamByActor[c.actorId] ?? 0) as TeamColorSlot,
     }))
-    setSpeechBubbles((cur) => [...cur, ...newBubbles].slice(-8))
-    const timers = newBubbles.map((b) =>
-      window.setTimeout(() => {
+    setSpeechBubbles((cur) => [...cur, ...newBubbles])
+    for (const b of newBubbles) {
+      const tid = window.setTimeout(() => {
+        bubbleTimersRef.current.delete(b.id)
         setSpeechBubbles((cur) => cur.filter((x) => x.id !== b.id))
-      }, 1500),
-    )
-    return () => {
-      for (const t of timers) window.clearTimeout(t)
+      }, MS.speechBubble)
+      bubbleTimersRef.current.set(b.id, tid)
     }
-  }, [game.log.length, boardBubblesOn, logMode, teamSlot])
+  }, [game.log.length, boardBubblesOn])
 
-  useEffect(() => {
-    if (!cpuThink) return
-    setCpuThinkNow(Date.now())
-    const id = window.setInterval(() => setCpuThinkNow(Date.now()), 100)
-    return () => window.clearInterval(id)
-  }, [cpuThink])
-
-  const gameRef = useRef(game)
   const battleLogRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    gameRef.current = game
-  }, [game])
-
   useLayoutEffect(() => {
     const el = battleLogRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -479,10 +495,11 @@ export function BattleScreen({
     return () => window.clearTimeout(t)
   }, [pulseKey])
 
-  const highlightMove = useMemo(
-    () => new Set(mode === 'move' ? legalMoves(game, game.humanActorId).map(coordKey) : []),
+  const legalMoveCoords = useMemo(
+    () => (mode === 'move' ? legalMoves(game, game.humanActorId) : []),
     [game, mode],
   )
+  const highlightMove = useMemo(() => new Set(legalMoveCoords.map(coordKey)), [legalMoveCoords])
   const highlightCastLegal = useMemo(
     () =>
       new Set(
@@ -501,15 +518,6 @@ export function BattleScreen({
         : new Set<string>(),
     [game, mode, castSkillId],
   )
-
-  const previewPatternKeys = useMemo(() => {
-    if (mode !== 'cast' || !castSkillId || !hoveredKey) return null
-    if (!highlightCastReach.has(hoveredKey)) return null
-    const anchor = parseKey(hoveredKey)
-    const cells = patternCellsForCast(game, game.humanActorId, castSkillId, anchor)
-    if (!cells) return null
-    return new Set(cells.map(coordKey))
-  }, [mode, castSkillId, hoveredKey, highlightCastReach, game])
 
   const legalStrikeCasts = useMemo(
     () => legalCasts(game, game.humanActorId).filter((c) => c.skillId === 'strike'),
@@ -548,52 +556,67 @@ export function BattleScreen({
 
   const pPos = game.actors[game.humanActorId]!.pos
 
-  function triggerReject(cellKey: string): void {
-    setMessage(mode === 'move' ? 'Illegal move.' : 'That target is not legal for this skill.')
-    setBoardFx({ kind: 'reject', cellKey })
-    window.setTimeout(() => setBoardFx(null), MS.reject)
-  }
+  const triggerReject = useCallback(
+    (cellKey: string) => {
+      setMessage(mode === 'move' ? 'Illegal move.' : 'That target is not legal for this skill.')
+      setBoardFx({ kind: 'reject', cellKey })
+      window.setTimeout(() => setBoardFx(null), MS.reject)
+    },
+    [mode],
+  )
 
-  function onCellClick(c: Coord): void {
-    setPulseKey(coordKey(c))
-    setMessage(null)
-    if (game.winner || game.tie || game.turn !== game.humanActorId) return
+  const onCellClick = useCallback(
+    (c: Coord) => {
+      setPulseKey(coordKey(c))
+      setMessage(null)
+      if (game.winner || game.tie || game.turn !== game.humanActorId) return
 
-    const k = coordKey(c)
+      const k = coordKey(c)
 
-    if (mode === 'move') {
-      const ok = legalMoves(game, game.humanActorId).some((m) => coordKey(m) === k)
-      if (!ok) {
-        triggerReject(k)
+      if (mode === 'move') {
+        const ok = legalMoveCoords.some((m) => coordKey(m) === k)
+        if (!ok) {
+          triggerReject(k)
+          return
+        }
+        const from = game.actors[game.humanActorId]!.pos
+        const to = c
+        setBoardFx({ kind: 'move', actor: game.humanActorId, from, to })
+        setHiddenPieceActor(game.humanActorId)
+        window.setTimeout(() => {
+          setGame((prev) => {
+            const r = applyAction(prev, game.humanActorId, { type: 'move', to })
+            return r.error ? prev : r.state
+          })
+          setBoardFx(null)
+          setHiddenPieceActor(null)
+          setMode('idle')
+        }, MS.move)
         return
       }
-      const from = game.actors[game.humanActorId]!.pos
-      const to = c
-      setBoardFx({ kind: 'move', actor: game.humanActorId, from, to })
-      setHiddenPieceActor(game.humanActorId)
-      window.setTimeout(() => {
-        setGame((prev) => {
-          const r = applyAction(prev, game.humanActorId, { type: 'move', to })
-          return r.error ? prev : r.state
-        })
-        setBoardFx(null)
-        setHiddenPieceActor(null)
-        setMode('idle')
-      }, MS.move)
-      return
-    }
 
-    if (mode === 'cast' && castSkillId) {
-      const ok = legalCasts(game, game.humanActorId).some(
-        (x) => x.skillId === castSkillId && coordKey(x.target) === k,
-      )
-      if (!ok) {
-        triggerReject(k)
-        return
+      if (mode === 'cast' && castSkillId) {
+        if (!highlightCastLegal.has(k)) {
+          triggerReject(k)
+          return
+        }
+        commitPlayerCast(castSkillId, c)
       }
-      commitPlayerCast(castSkillId, c)
-    }
-  }
+    },
+    [
+      game.winner,
+      game.tie,
+      game.turn,
+      game.humanActorId,
+      game.actors,
+      mode,
+      castSkillId,
+      legalMoveCoords,
+      highlightCastLegal,
+      commitPlayerCast,
+      triggerReject,
+    ],
+  )
 
   function onStrikePlayer(): void {
     setMessage(null)
@@ -607,35 +630,43 @@ export function BattleScreen({
     setCastSkillId('strike')
   }
 
-  function cellClassSuffix(c: Coord): string {
-    const k = coordKey(c)
-    const parts: string[] = []
-    const hazard = game.impactedTiles[k]
-    if (hazard) {
-      const element = getSkillDef(hazard.skillId).element
-      parts.push(`holo-cell--hazard-${element}`)
-    }
-    if (mode === 'move' && highlightMove.has(k)) parts.push('holo-cell--hint-move')
-    if (mode === 'cast' && castSkillId) {
-      if (highlightCastLegal.has(k)) parts.push('holo-cell--hint-cast-legal')
-      else if (highlightCastReach.has(k)) parts.push('holo-cell--hint-cast-reach')
-    }
-    if (isOvertimeLethal(game, c)) {
-      parts.push('holo-cell--overtime-lethal')
-      if (isOvertimeStormPulseRound(game)) parts.push('holo-cell--overtime-lethal--pulse')
-    }
-    return parts.join(' ')
-  }
+  const cellClassSuffix = useCallback(
+    (c: Coord): string => {
+      const k = coordKey(c)
+      const parts: string[] = []
+      const hazard = game.impactedTiles[k]
+      if (hazard) {
+        const element = getSkillDef(hazard.skillId).element
+        parts.push(`holo-cell--hazard-${element}`)
+      }
+      if (mode === 'move' && highlightMove.has(k)) parts.push('holo-cell--hint-move')
+      if (mode === 'cast' && castSkillId) {
+        if (highlightCastLegal.has(k)) parts.push('holo-cell--hint-cast-legal')
+        else if (highlightCastReach.has(k)) parts.push('holo-cell--hint-cast-reach')
+      }
+      if (isOvertimeLethal(game, c)) {
+        parts.push('holo-cell--overtime-lethal')
+        if (isOvertimeStormPulseRound(game)) parts.push('holo-cell--overtime-lethal--pulse')
+      }
+      return parts.join(' ')
+    },
+    [game, mode, castSkillId, highlightMove, highlightCastLegal, highlightCastReach],
+  )
 
   const pathFrom = mode === 'move' && highlightMove.size > 0 ? pPos : null
-  const pathTos = mode === 'move' ? legalMoves(game, game.humanActorId) : []
+  const pathTos = legalMoveCoords
 
-  const cells: Coord[] = []
-  for (let y = 0; y < game.size; y++) {
-    for (let x = 0; x < game.size; x++) {
-      cells.push({ x, y })
+  const cells: Coord[] = useMemo(() => {
+    const out: Coord[] = []
+    for (let y = 0; y < game.size; y++) {
+      for (let x = 0; x < game.size; x++) {
+        out.push({ x, y })
+      }
     }
-  }
+    return out
+  }, [game.size])
+
+  const getCellTooltip = useCallback((c: Coord) => describeBattleCellTooltip(game, c), [game])
 
   const contextualHint = useMemo(() => {
     const human = game.humanActorId
@@ -677,6 +708,12 @@ export function BattleScreen({
 
   const suddenDeathRail = suddenDeathRailLabel(game)
 
+  const matchRuleLabel = useMemo(() => {
+    const off = config.cpuBudgetOffset ?? 0
+    if (off <= 0) return 'Fair duel'
+    return `Challenge · CPU L${config.level + off}`
+  }, [config.cpuBudgetOffset, config.level])
+
   return (
     <div className="battle-surface">
       <header className="battle-surface__rail">
@@ -690,6 +727,9 @@ export function BattleScreen({
         </button>
         <div className="battle-surface__phase">
           <h1 className={railTitle.className}>{railTitle.text}</h1>
+          {!game.winner && !game.tie ? (
+            <span className="battle-surface__match-kind">{matchRuleLabel}</span>
+          ) : null}
           {suddenDeathRail ? (
             <span className="battle-surface__overtime-countdown" aria-label={suddenDeathRail}>
               {suddenDeathRail}
@@ -701,22 +741,23 @@ export function BattleScreen({
             contextContent={
               <>
                 <p className="ls-modal__note">
-                  Move up, down, left, or right (stamina costs apply). Strike adjacent hostiles. Cast spends mana; the skill
-                  pattern anchors on the cell you click, and range is measured from your position to that anchor.
+                  Move up, down, left, or right (stamina costs apply). Physical skills hit adjacent targets (and other
+                  patterns per skill). Elemental casts spend <strong>mana</strong>; physical casts spend{' '}
+                  <strong>stamina</strong>. The skill pattern anchors on the cell you click, and range is measured from
+                  your position to that anchor.
                 </p>
                 <p className="ls-modal__note">
                   Turns follow the roster order. Reduce all enemies to 0 HP to win.
                 </p>
                 <p className="ls-modal__note">
-                  <strong>Skip</strong> ends your turn immediately without moving, striking, or casting—useful when you
-                  want to pass.
+                  <strong>Skip</strong> ends your turn immediately without moving or casting—useful when you want to pass.
                 </p>
                 {game.overtimeEnabled ? (
                   <p className="ls-modal__note">
                     <strong>Sudden death</strong> is on for this match (N was set in match setup). Outside the safe
                     zone, <em>pulsing</em> red means the storm will <strong>not</strong> deal damage when this full round
                     ends; <em>solid</em> red means it will. The first boundary after sudden death starts is always a
-                    warning (no storm damage); then strike and skip alternate. The safe zone shrinks over time; storm
+                    warning (no storm damage); then storm damage and skip rounds alternate. The safe zone shrinks over time; storm
                     hits skip armor and only reduce shield then HP.
                   </p>
                 ) : null}
@@ -755,11 +796,7 @@ export function BattleScreen({
                   <div className="bs-actor__label-row">
                     <span className="bs-actor__label">{label}</span>
                     {cpuThink?.actorId === id ? (
-                      <CpuThinkRing
-                        deadlineMs={cpuThink.deadline}
-                        nowMs={cpuThinkNow}
-                        label={`${label} deciding`}
-                      />
+                      <CpuThinkRing deadlineMs={cpuThink.deadline} label={`${label} deciding`} />
                     ) : null}
                   </div>
                   <BsMeter kind="hp" current={a.hp} max={a.maxHp} />
@@ -777,17 +814,18 @@ export function BattleScreen({
             cells={cells}
             getCellClassSuffix={cellClassSuffix}
             onCellClick={onCellClick}
-            hoveredKey={hoveredKey}
-            onHoverChange={setHoveredKey}
             pulseKey={pulseKey}
             pathFrom={pathFrom}
             pathTos={pathTos}
             pieces={boardPieces}
             hiddenPieceActor={hiddenPieceActor}
             boardFx={boardFx}
-            previewPatternKeys={previewPatternKeys}
+            castPreviewSkillId={mode === 'cast' ? castSkillId : null}
+            highlightCastReach={highlightCastReach}
+            game={game}
+            humanActorId={game.humanActorId}
             sceneCastElement={sceneCastElement}
-            getCellTooltip={(c) => describeBattleCellTooltip(game, c)}
+            getCellTooltip={getCellTooltip}
             playerHintColor={playerHintColor}
             speechBubbles={boardBubblesOn ? speechBubbles : null}
           />
@@ -858,7 +896,7 @@ export function BattleScreen({
                 const strikeBlocked = isStrike && legalStrikeCasts.length === 0
                 const helpBlurb = formatSkillBattleHelp(def)
                 const costTitle = isStrike
-                  ? `Melee Strike · ${costStr} ${resShort} · ${entryPointCost(e)} pts`
+                  ? `Strike · ${costStr} ${resShort} · ${entryPointCost(e)} pts`
                   : `${costStr} ${resShort} · ${entryPointCost(e)} pts`
                 const titleWhenUsable = `${costTitle} — ${helpBlurb}`
                 return (
@@ -876,7 +914,7 @@ export function BattleScreen({
                     }
                     title={
                       silenced
-                        ? 'Silenced — magic skills unavailable'
+                        ? 'Silenced — elemental magic skills unavailable'
                         : disarmed
                           ? 'Disarmed — physical skills unavailable'
                           : strikeBlocked
@@ -945,8 +983,6 @@ export function BattleScreen({
                 <span className="battle-log__toolbar-label battle-log__filter-label">Show</span>
                 {game.turnOrder.map((id) => {
                   const checked = logActorFilter === null || logActorFilter.has(id)
-                  const onlyVisible =
-                    logActorFilter !== null && logActorFilter.size === 1 && logActorFilter.has(id)
                   const slot = teamSlot(game.teamByActor[id] ?? 0)
                   return (
                     <label
@@ -956,7 +992,6 @@ export function BattleScreen({
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={onlyVisible}
                         onChange={() => toggleLogActorFilter(id)}
                         aria-label={`Show log lines for ${battlePanelLabel(game, id)}`}
                       />

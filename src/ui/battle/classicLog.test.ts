@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatClassicRow } from './classicLog'
-import type { ActorState, GameState } from '../../game/types'
+import type { ActorState, BattleLogEntry, GameState } from '../../game/types'
 import { defaultTraitPoints } from '../../game/traits'
 
 function minimalActor(id: string, displayName: string): ActorState {
@@ -19,6 +19,7 @@ function minimalActor(id: string, displayName: string): ActorState {
     manaRegenPerTurn: 1,
     tilesMovedThisTurn: 0,
     physicalStreak: 0,
+    combatLevel: 10,
     statuses: [],
   }
 }
@@ -42,6 +43,13 @@ function game(partial: Partial<GameState> = {}): GameState {
     teamByActor: { h: 0, c: 1 },
     humanActorId: 'h',
     cpuDifficulty: {},
+    fullRoundsCompleted: 0,
+    overtimeEnabled: false,
+    roundsUntilOvertime: 12,
+    overtime: null,
+    tie: false,
+    casterTone: 'classic_arena',
+    lastHpDamageFrom: {},
     ...partial,
   } as GameState
 }
@@ -69,13 +77,27 @@ describe('formatClassicRow', () => {
     ).toBeNull()
   })
 
+  it('shows action_denied using engine classic entry text', () => {
+    const g = game()
+    const row = formatClassicRow(
+      {
+        text: 'Vex cannot cast — not enough mana.',
+        subject: 'h',
+        detail: { kind: 'action_denied', actorId: 'h', reason: 'mana' },
+      },
+      g,
+    )
+    expect(row?.text).toBe('Vex cannot cast — not enough mana.')
+    expect(row?.subject).toBe('h')
+  })
+
   it('formats human turn and actions with callsign (third person)', () => {
     const g = game()
     expect(formatClassicRow({ text: 'x', detail: { kind: 'turn', actorId: 'h' } }, g)?.text).toBe("Vex's turn.")
     expect(formatClassicRow({ text: 'x', detail: { kind: 'move', actorId: 'h' } }, g)?.text).toBe('Vex moves.')
     expect(
       formatClassicRow({ text: 'x', detail: { kind: 'strike', actorId: 'h', targetId: 'c', damage: 4 } }, g)?.text,
-    ).toBe('Vex strikes for 4 damage.')
+    ).toBe('Vex lands Strike for 4 damage.')
   })
 
   it('formats CPU turn and actions with varied phrasing', () => {
@@ -85,7 +107,7 @@ describe('formatClassicRow', () => {
     const movePool = ['I move.', 'I shift position.', 'Repositioning.', 'Sliding to a better tile.']
     expect(movePool).toContain(formatClassicRow({ text: 'x', detail: { kind: 'move', actorId: 'c' } }, g, 0)?.text)
     const strikePool = [
-      'I strike for 3 damage.',
+      'I land Strike for 3 damage.',
       'My swing lands for 3.',
       'Connecting for 3 damage.',
       'Hit for 3 damage.',
@@ -141,5 +163,64 @@ describe('formatClassicRow', () => {
     expect(
       formatClassicRow({ text: 'x', detail: { kind: 'knockback', attackerId: 'c', targetId: 'h' } }, g)?.text,
     ).toBe('Vex gets knocked back.')
+  })
+
+  it('appends shield note on residual_trigger when shieldAbsorbed is set', () => {
+    const g = game()
+    expect(
+      formatClassicRow(
+        {
+          text: 'x',
+          detail: {
+            kind: 'residual_trigger',
+            skillId: 'ember',
+            victimId: 'h',
+            damage: 4,
+            shieldAbsorbed: 3,
+          },
+        },
+        g,
+      )?.text,
+    ).toBe('Vex triggers residual Ember for 4 damage (3 to shield).')
+    const cpuLine = formatClassicRow(
+      {
+        text: 'x',
+        detail: {
+          kind: 'residual_trigger',
+          skillId: 'ember',
+          victimId: 'c',
+          damage: 4,
+          shieldAbsorbed: 2,
+        },
+      },
+      g,
+      0,
+    )?.text
+    expect(cpuLine).toContain('4')
+    expect(cpuLine).toContain('(2 to shield)')
+  })
+
+  it('shows kill_steal milestone using the engine log line', () => {
+    const g = game({
+      actors: {
+        h: minimalActor('h', 'Vex'),
+        c: minimalActor('c', 'Shard'),
+        v: minimalActor('v', 'Rook'),
+      },
+      turnOrder: ['h', 'c', 'v'],
+      teamByActor: { h: 0, c: 1, v: 2 },
+    })
+    const entry: BattleLogEntry = {
+      text: 'Shard takes the elimination on Rook — Vex did the earlier damage.',
+      subject: 'c',
+      detail: {
+        kind: 'battle_milestone',
+        milestone: 'kill_steal',
+        killerId: 'c',
+        victimId: 'v',
+        creditedDamagerId: 'h',
+      },
+    }
+    expect(formatClassicRow(entry, g)).toEqual({ text: entry.text, subject: 'c' })
   })
 })

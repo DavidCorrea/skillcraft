@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { CpuDifficulty, TraitPoints } from './types'
-import { maxSkillsForLevel, totalLoadoutPoints, validateLoadout } from './skills'
-import { randomCpuBuild, randomFullPlayerLoadout } from './randomCpuBuild'
-import { totalTraitPoints } from './traits'
+import { getSkillDef, maxSkillsForLevel, totalLoadoutPoints, validateLoadout } from './skills'
+import { cpuTraitRolePillarScores, randomCpuBuild, randomFullPlayerLoadout } from './randomCpuBuild'
+import { defaultTraitPoints, totalTraitPoints } from './traits'
 
 function coreTraitSum(t: TraitPoints): number {
   return (
@@ -56,6 +56,47 @@ describe('randomCpuBuild', () => {
       nightmareSum += coreTraitSum(randomCpuBuild(level, 'nightmare').cpuTraits)
     }
     expect(nightmareSum / n).toBeGreaterThan(easySum / n + 2)
+  })
+
+  it('nightmare skill picks include utilities often enough (weight bias)', () => {
+    const level = 18
+    const n = 280
+    let withUtility = 0
+    let utilPerBuild = 0
+    for (let i = 0; i < n; i++) {
+      const { cpuLoadout } = randomCpuBuild(level, 'nightmare')
+      const u = cpuLoadout.filter((e) => getSkillDef(e.skillId).damageKind === 'none').length
+      utilPerBuild += u
+      if (u >= 1) withUtility += 1
+    }
+    expect(withUtility / n).toBeGreaterThanOrEqual(0.5)
+    expect(utilPerBuild / n).toBeGreaterThanOrEqual(0.72)
+  })
+
+  it('easy CPUs lean into one combat pillar (role-biased traits)', () => {
+    const level = 16
+    const n = 220
+    let peaked = 0
+    let eligible = 0
+    for (let i = 0; i < n; i++) {
+      const t = randomCpuBuild(level, 'easy').cpuTraits
+      const tp = totalTraitPoints(t)
+      if (tp < 6) continue
+      eligible++
+      const { melee, caster, tank } = cpuTraitRolePillarScores(t)
+      const dominant = Math.max(melee, caster, tank)
+      if (dominant >= tp * 0.42) peaked += 1
+    }
+    expect(eligible).toBeGreaterThan(80)
+    expect(peaked / eligible).toBeGreaterThanOrEqual(0.62)
+  })
+
+  it('cpuTraitRolePillarScores counts shared keys in each role bucket', () => {
+    const t = defaultTraitPoints()
+    t.vitality = 4
+    const s = cpuTraitRolePillarScores(t)
+    expect(s.melee).toBeGreaterThanOrEqual(4)
+    expect(s.tank).toBeGreaterThanOrEqual(4)
   })
 })
 
