@@ -12,7 +12,7 @@ import {
   legalMoves,
   resetIdsForTests,
 } from './engine'
-import type { BattleConfig, MatchSettings } from './types'
+import type { BattleConfig, MatchSettings, StatusTag } from './types'
 import { coordKey } from './board'
 import { defaultTraitPoints, STAMINA_REGEN_PER_TURN } from './traits'
 import { focusBonusDamage } from './skills'
@@ -192,7 +192,7 @@ describe('applyAction', () => {
         [TID.cpu]: {
           ...s0.actors[TID.cpu]!,
           pos: { x: 3, y: 4 },
-          statuses: [{ id: 'sh1', tag: { t: 'shield', amount: 5 } }],
+          statuses: [{ id: 'sh1', tag: { t: 'shield', amount: 5 } satisfies StatusTag }],
         },
       },
     }
@@ -256,7 +256,7 @@ describe('chilled movement', () => {
         ...base.actors,
         [TID.human]: {
           ...nimble,
-          statuses: [{ id: 'c', tag: { t: 'chilled', duration: 2 } }],
+          statuses: [{ id: 'c', tag: { t: 'chilled', duration: 2 } satisfies StatusTag }],
         },
       },
     }

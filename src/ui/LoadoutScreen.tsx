@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BattleConfig, PatternOffset, SkillId, SkillLoadoutEntry, TraitPoints } from '../game/types'
 import { MatchSetupForm, type MatchSetupFormHandle } from './MatchSetupScreen'
 import type { SkillDefinition } from '../game/skills'
@@ -475,13 +475,18 @@ export function LoadoutScreen({
   }
 
   const levelFitRef = useRef({ traits, configs, selected })
-  levelFitRef.current = { traits, configs, selected }
+
+  useLayoutEffect(() => {
+    levelFitRef.current = { traits, configs, selected }
+  }, [traits, configs, selected])
 
   useEffect(() => {
     const cap = maxSkillsForLevel(level)
-    setSelected((prev) => {
-      if (prev.size <= cap) return prev
-      return new Set([...prev].slice(0, cap))
+    queueMicrotask(() => {
+      setSelected((prev) => {
+        if (prev.size <= cap) return prev
+        return new Set([...prev].slice(0, cap))
+      })
     })
   }, [level])
 

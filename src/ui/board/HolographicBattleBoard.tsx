@@ -153,11 +153,11 @@ function SpeechBubbleStack({
 
   useEffect(() => {
     if (moveFrom && moveTo) {
-      setPos(moveFrom)
+      queueMicrotask(() => setPos(moveFrom))
       const id = requestAnimationFrame(() => setPos(moveTo))
       return () => cancelAnimationFrame(id)
     }
-    setPos(anchorPos)
+    queueMicrotask(() => setPos(anchorPos))
   }, [moveFrom?.x, moveFrom?.y, moveTo?.x, moveTo?.y, anchorPos.x, anchorPos.y])
 
   const center = isMoving

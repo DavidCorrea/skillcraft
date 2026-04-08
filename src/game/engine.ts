@@ -2239,7 +2239,7 @@ export function applyTurnEntry(state: GameState): GameState {
   const statusesBeforeTick = actor.statuses
   const tick = computeTurnStartTick(actor)
   actor = tick.actor
-  let next = withActor(state, actorId, actor)
+  const next = withActor(state, actorId, actor)
   const expiredTags = expiredStatusKindsForLog(statusesBeforeTick, actor.statuses)
   const statusExpiredEntry = statusExpiredLogEntry(next, actorId, expiredTags)
   const tickEntries = turnTickResourceEntries(next, actorId, tick)

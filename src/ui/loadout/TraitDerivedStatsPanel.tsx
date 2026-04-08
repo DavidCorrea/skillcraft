@@ -46,7 +46,7 @@ export function TraitDerivedStatsPanel({
       return
     }
 
-    setFlashing(changed)
+    queueMicrotask(() => setFlashing(changed))
     const id = window.setTimeout(() => {
       setFlashing(new Set())
     }, FLASH_MS)

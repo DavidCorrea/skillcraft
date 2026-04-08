@@ -380,7 +380,7 @@ export function rangeTierPointCost(rangeTier: number): number {
 
 /** Largest tier such that {@link tierPointCost}(tier) ≤ `loadoutPointsAvailable`. */
 export function maxPurchasableRangeTier(loadoutPointsAvailable: number): number {
-  let avail = Math.max(0, loadoutPointsAvailable)
+  const avail = Math.max(0, loadoutPointsAvailable)
   let t = 0
   while (tierPointCost(t + 1) <= avail) t += 1
   return Math.min(24, t)
@@ -860,7 +860,7 @@ export function fitPlayerBudgetToLevel(
   entries: SkillLoadoutEntry[],
 ): { traits: TraitPoints; entries: SkillLoadoutEntry[] } {
   let t = { ...traits }
-  let ent: SkillLoadoutEntry[] = entries.map((e) => ({
+  const ent: SkillLoadoutEntry[] = entries.map((e) => ({
     ...e,
     pattern: [...e.pattern],
     statusStacks: e.statusStacks,

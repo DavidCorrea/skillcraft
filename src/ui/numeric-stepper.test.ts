@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyIntStep } from './numeric-stepper.tsx'
+import { applyIntStep } from './applyIntStep'
 
 describe('applyIntStep', () => {
   it('clamps increment at max', () => {

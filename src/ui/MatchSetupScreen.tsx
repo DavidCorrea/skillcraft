@@ -1,4 +1,13 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { BattleConfig, CasterToneId, CombatVoicePersonality, CpuDifficulty, TeamColorSlot } from '../game/types'
 import {
   CASTER_TONE_OPTIONS,
@@ -378,7 +387,10 @@ export const MatchSetupForm = forwardRef<MatchSetupFormHandle, MatchSetupFormPro
     const [humanPersonality, setHumanPersonality] = useState<'' | CombatVoicePersonality>('')
 
     const onValidityChangeRef = useRef(onValidityChange)
-    onValidityChangeRef.current = onValidityChange
+
+    useLayoutEffect(() => {
+      onValidityChangeRef.current = onValidityChange
+    }, [onValidityChange])
 
     const boardSizeParsed = useMemo(() => {
       const t = boardOverride.trim()
