@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bubbleCandidatesForNewLogEntries } from './bubbleCandidates'
+import { bubbleCandidatesAtIndices, bubbleCandidatesForNewLogEntries } from './bubbleCandidates'
 import type { BattleLogEntry, GameState } from '../../game/types'
 
 function minimalGame(overrides: Partial<GameState> = {}): GameState {
@@ -54,5 +54,43 @@ describe('bubbleCandidatesForNewLogEntries', () => {
     expect(lines).toHaveLength(1)
     expect(lines[0]!.actorId).toBe('c1')
     expect(lines[0]!.text).toMatch(/shift|move|position/i)
+  })
+})
+
+describe('bubbleCandidatesAtIndices', () => {
+  it('matches bubbleCandidatesForNewLogEntries for a contiguous index range', () => {
+    const game = minimalGame()
+    const log: BattleLogEntry[] = [
+      { text: 'a', subject: 'c1', detail: { kind: 'move', actorId: 'c1' } },
+      { text: 'b', subject: 'h', detail: { kind: 'move', actorId: 'h' } },
+    ]
+    const range = bubbleCandidatesForNewLogEntries(0, log, game, 'classic')
+    const atIdx = bubbleCandidatesAtIndices(log, [0, 1], game, 'classic')
+    expect(atIdx).toEqual(range)
+  })
+
+  it('only includes bubbles for log entries new after a ring-buffer-style rotate', () => {
+    const game = minimalGame()
+    const stale = Array.from({ length: 39 }, (_, i) => ({
+      text: `old-${i}`,
+      subject: 'h' as const,
+      detail: { kind: 'move' as const, actorId: 'h' as const },
+    }))
+    const fresh: BattleLogEntry = {
+      text: 'Hostile moves.',
+      subject: 'c1',
+      detail: { kind: 'move', actorId: 'c1' },
+    }
+    const prevLog = [...stale, { text: 'drop-me', subject: 'h', detail: { kind: 'move', actorId: 'h' } }]
+    const newLog = [...prevLog.slice(1), fresh]
+    const prevSet = new Set(prevLog)
+    const newIndices: number[] = []
+    for (let i = 0; i < newLog.length; i++) {
+      if (!prevSet.has(newLog[i]!)) newIndices.push(i)
+    }
+    expect(newIndices).toEqual([39])
+    const lines = bubbleCandidatesAtIndices(newLog, newIndices, game, 'classic')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]!.actorId).toBe('c1')
   })
 })

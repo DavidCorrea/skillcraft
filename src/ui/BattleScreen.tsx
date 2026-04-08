@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { ActorId, BattleConfig, Coord, GameState, SkillId, TeamColorSlot } from '../game/types'
+import type {
+  ActorId,
+  BattleConfig,
+  BattleLogEntry,
+  Coord,
+  GameState,
+  SkillId,
+  TeamColorSlot,
+} from '../game/types'
 import { coordKey } from '../game/board'
 import {
   applyAction,
@@ -26,7 +34,7 @@ import {
   minCastManhattanForLoadout,
 } from '../game/skills'
 import { HolographicBattleBoard, type BattleSpeechBubble, type BoardPiece } from './board'
-import { bubbleCandidatesForNewLogEntries } from './battle/bubbleCandidates'
+import { bubbleCandidatesAtIndices } from './battle/bubbleCandidates'
 import {
   castResolveStaggerMap,
   patternCellsForCast,
@@ -171,7 +179,8 @@ export function BattleScreen({
     }
   })
   const [speechBubbles, setSpeechBubbles] = useState<BattleSpeechBubble[]>([])
-  const prevLogLenRef = useRef(game.log.length)
+  /** Previous `game.log` snapshot for bubble diffing (ring buffer keeps `log.length` at 40). */
+  const prevLogSnapshotRef = useRef<BattleLogEntry[] | null>(null)
   const gameRef = useRef(game)
   gameRef.current = game
   const bubbleTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -189,6 +198,8 @@ export function BattleScreen({
 
   const logModeRef = useRef(logMode)
   logModeRef.current = logMode
+  const logActorFilterRef = useRef(logActorFilter)
+  logActorFilterRef.current = logActorFilter
   const teamSlotRef = useRef(teamSlot)
   teamSlotRef.current = teamSlot
 
@@ -232,6 +243,15 @@ export function BattleScreen({
       if (logActorFilter === null) return true
       if (subject === undefined) return true
       return logActorFilter.has(subject)
+    },
+    [logActorFilter],
+  )
+
+  const speechBubbleActorMatchesFilter = useCallback(
+    (actorId: ActorId) => {
+      if (logActorFilter === null) return true
+      if (logActorFilter.size === 0) return false
+      return logActorFilter.has(actorId)
     },
     [logActorFilter],
   )
@@ -303,21 +323,46 @@ export function BattleScreen({
   /** New log lines only. `useLayoutEffect` keeps bubbles in the same frame as the log (before paint). */
   useLayoutEffect(() => {
     const g = gameRef.current
-    const len = g.log.length
-    if (len < prevLogLenRef.current) {
-      prevLogLenRef.current = len
+    const log = g.log
+
+    if (!boardBubblesOn) {
+      prevLogSnapshotRef.current = log
+      return
+    }
+
+    const prevSnap = prevLogSnapshotRef.current
+    prevLogSnapshotRef.current = log
+
+    if (prevSnap !== null && log.length < prevSnap.length) {
       for (const t of bubbleTimersRef.current.values()) window.clearTimeout(t)
       bubbleTimersRef.current.clear()
       setSpeechBubbles([])
-      return
+      /** Do not return: e.g. CPU "thinking" line makes log 41 then `applyAction` slices to 40 — still diff new rows. */
     }
-    const prev = prevLogLenRef.current
-    prevLogLenRef.current = len
-    if (!boardBubblesOn || prev >= len) return
-    const candidates = bubbleCandidatesForNewLogEntries(prev, g.log, g, logModeRef.current)
+
+    if (prevSnap === null) return
+
+    const prevSet = new Set(prevSnap)
+    const newIndices: number[] = []
+    for (let i = 0; i < log.length; i++) {
+      if (!prevSet.has(log[i]!)) newIndices.push(i)
+    }
+    if (newIndices.length === 0) return
+
+    const candidates = bubbleCandidatesAtIndices(log, newIndices, g, logModeRef.current)
     if (candidates.length === 0) return
+
+    const filter = logActorFilterRef.current
+    const filteredCandidates =
+      filter === null
+        ? candidates
+        : filter.size === 0
+          ? []
+          : candidates.filter((c) => filter.has(c.actorId))
+    if (filteredCandidates.length === 0) return
+
     const slotFn = teamSlotRef.current
-    const newBubbles: BattleSpeechBubble[] = candidates.map((c, j) => ({
+    const newBubbles: BattleSpeechBubble[] = filteredCandidates.map((c, j) => ({
       id: `${Date.now()}-${j}-${Math.random().toString(36).slice(2, 9)}`,
       actorId: c.actorId,
       text: c.text,
@@ -331,7 +376,12 @@ export function BattleScreen({
       }, MS.speechBubble)
       bubbleTimersRef.current.set(b.id, tid)
     }
-  }, [game.log.length, boardBubblesOn])
+  }, [game.log, boardBubblesOn])
+
+  const visibleSpeechBubbles = useMemo(() => {
+    if (!boardBubblesOn || speechBubbles.length === 0) return []
+    return speechBubbles.filter((b) => speechBubbleActorMatchesFilter(b.actorId))
+  }, [boardBubblesOn, speechBubbles, speechBubbleActorMatchesFilter])
 
   const battleLogRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -827,7 +877,7 @@ export function BattleScreen({
             sceneCastElement={sceneCastElement}
             getCellTooltip={getCellTooltip}
             playerHintColor={playerHintColor}
-            speechBubbles={boardBubblesOn ? speechBubbles : null}
+            speechBubbles={boardBubblesOn ? visibleSpeechBubbles : null}
           />
         </div>
 
@@ -974,12 +1024,16 @@ export function BattleScreen({
                   className={`battle-log__mode${boardBubblesOn ? ' is-on' : ''}`}
                   aria-pressed={boardBubblesOn}
                   onClick={() => setBoardBubblesOn((v) => !v)}
-                  title="Show short speech bubbles over fighters when new log lines mention them"
+                  title="Speech bubbles over fighters for new log lines; who shows follows the Show checkboxes"
                 >
                   Bubbles
                 </button>
               </div>
-              <div className="battle-log__filter" role="group" aria-label="Filter log by fighter">
+              <div
+                className="battle-log__filter"
+                role="group"
+                aria-label="Filter battle log and fighter speech bubbles by combatant"
+              >
                 <span className="battle-log__toolbar-label battle-log__filter-label">Show</span>
                 {game.turnOrder.map((id) => {
                   const checked = logActorFilter === null || logActorFilter.has(id)
@@ -993,7 +1047,7 @@ export function BattleScreen({
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleLogActorFilter(id)}
-                        aria-label={`Show log lines for ${battlePanelLabel(game, id)}`}
+                        aria-label={`Show log lines and speech bubbles for ${battlePanelLabel(game, id)}`}
                       />
                       <span>{battlePanelLabel(game, id)}</span>
                     </label>
