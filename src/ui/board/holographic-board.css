@@ -210,7 +210,7 @@
   width: max-content;
   max-width: min(22rem, calc(100vw - 1.5rem));
   padding: 0.45rem 0.6rem;
-  font-size: 0.7rem;
+  font-size: var(--text-caption);
   line-height: 1.4;
   display: flex;
   flex-direction: column;
@@ -701,7 +701,7 @@
   border-radius: 5px;
   /* Match `.battle-log__row` (battle-surface defines `--bs-mono`). */
   font-family: var(--bs-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  font-size: 0.42rem;
+  font-size: var(--text-micro);
   line-height: 1.38;
   letter-spacing: 0.12em;
   text-transform: uppercase;

@@ -29,7 +29,7 @@ dialog.actor-inspect {
 
 .actor-inspect__stat-k {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.5rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.75);
@@ -37,14 +37,14 @@ dialog.actor-inspect {
 
 .actor-inspect__stat-v {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.78rem;
+  font-size: var(--text-ui);
   font-variant-numeric: tabular-nums;
   color: #e0e4ea;
 }
 
 .actor-inspect__meta-line {
   margin: 0;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   line-height: 1.45;
   color: rgba(148, 163, 184, 0.88);
 }
@@ -60,7 +60,7 @@ dialog.actor-inspect {
 .actor-inspect__trait-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
 }
 
 .actor-inspect__trait-table th,
@@ -73,7 +73,7 @@ dialog.actor-inspect {
 
 .actor-inspect__trait-table th {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.48rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.55);
@@ -123,7 +123,7 @@ dialog.actor-inspect {
 
 .actor-inspect__skill-name {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #e0e4ea;
@@ -132,7 +132,7 @@ dialog.actor-inspect {
 .actor-inspect__skill-elem {
   flex-shrink: 0;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.5rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 0.12rem 0.35rem;
@@ -211,7 +211,7 @@ dialog.actor-inspect {
 .actor-inspect__pattern-caption {
   margin: 0 0 0.25rem;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.48rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.55);
@@ -236,7 +236,7 @@ dialog.actor-inspect {
   align-items: center;
   justify-content: center;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   font-variant-numeric: tabular-nums;
   border-radius: 2px;
   border: 1px solid rgba(226, 232, 240, 0.06);
@@ -256,7 +256,7 @@ dialog.actor-inspect {
 /* Empty anchor: explicit + (see TSX) */
 .actor-inspect__pattern-cell--anchor:not(.actor-inspect__pattern-cell--hit) {
   color: #6eb8c8;
-  font-size: 0.75rem;
+  font-size: var(--text-ui);
   font-weight: 700;
   line-height: 1;
 }
@@ -280,7 +280,7 @@ dialog.actor-inspect {
 }
 
 .actor-inspect__pattern-cell--multi {
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   font-weight: 600;
 }
 
@@ -292,7 +292,7 @@ dialog.actor-inspect {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0.25rem 0.65rem;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   line-height: 1.4;
   color: rgba(148, 163, 184, 0.88);
 }
@@ -300,7 +300,7 @@ dialog.actor-inspect {
 .actor-inspect__skill-meta dt {
   margin: 0;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.5rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.55);
@@ -320,7 +320,7 @@ dialog.actor-inspect {
 .actor-inspect__status-list li {
   padding: 0.35rem 0;
   border-bottom: 1px solid rgba(226, 232, 240, 0.06);
-  font-size: 0.65rem;
+  font-size: var(--text-caption);
   color: rgba(148, 163, 184, 0.88);
 }
 

@@ -24,7 +24,7 @@
   background: none;
   cursor: pointer;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.55rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.82);
@@ -99,7 +99,7 @@
 .ls-modal__title {
   margin: 0;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.65rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #6eb8c8;
@@ -113,7 +113,7 @@
   background: #050608;
   color: rgba(148, 163, 184, 0.82);
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.55rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
@@ -137,7 +137,7 @@
 .ls-modal__close--primary {
   min-width: 8.5rem;
   padding: 0.4rem 0.85rem;
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
 }
 
 .ls-modal__tabbar {
@@ -157,7 +157,7 @@
   background: transparent;
   cursor: pointer;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.65);
@@ -192,7 +192,7 @@
   min-height: 0;
   overflow: auto;
   padding: 0.5rem 0.65rem 0.65rem;
-  font-size: 0.72rem;
+  font-size: var(--text-ui);
   line-height: 1.45;
   letter-spacing: 0.02em;
 }
@@ -208,7 +208,7 @@
 .ls-modal__h {
   margin: 0 0 0.4rem;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.82);
@@ -225,7 +225,7 @@
 .ls-modal__subh {
   margin: 0 0 0.35rem;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.54rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.65);
@@ -234,7 +234,7 @@
 .ls-modal__note {
   margin: 0 0 0.5rem;
   color: rgba(148, 163, 184, 0.82);
-  font-size: 0.68rem;
+  font-size: var(--text-ui);
 }
 
 .ls-modal__note:last-child {
@@ -250,7 +250,7 @@
   display: inline-block;
   margin-right: 0.35rem;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.65);
@@ -264,7 +264,7 @@
   margin: 0;
   padding-left: 1.2rem;
   color: rgba(148, 163, 184, 0.82);
-  font-size: 0.68rem;
+  font-size: var(--text-ui);
   line-height: 1.5;
 }
 
@@ -300,7 +300,7 @@
 .ls-modal__summary {
   padding: 0.45rem 0.55rem;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.82);
@@ -350,7 +350,7 @@
 
 .ls-modal__tag {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   color: #c9a227;
 }
 
@@ -361,7 +361,7 @@
 .ls-modal__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.65rem;
+  font-size: var(--text-caption);
 }
 
 .ls-modal__table th,
@@ -374,7 +374,7 @@
 
 .ls-modal__table th {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.82);

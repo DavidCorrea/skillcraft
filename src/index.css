@@ -24,6 +24,11 @@
   --radius-panel: 0;
   --shadow-glow: 0 0 40px rgba(34, 211, 238, 0.08);
 
+  /* Readable at 100% browser zoom; floors px, scales with rem inside clamp */
+  --text-micro: clamp(10px, 0.58rem, 12px);
+  --text-caption: clamp(11px, 0.65rem, 13px);
+  --text-ui: clamp(12px, 0.72rem, 14px);
+
   font-family: var(--font-body);
   line-height: 1.45;
   color: var(--text);
@@ -39,6 +44,8 @@
 
 html {
   height: 100%;
+  /* ~18px when UA default is 16px; respects user font preferences */
+  font-size: clamp(106.25%, calc(104% + 0.15vw), 118.75%);
 }
 
 body {

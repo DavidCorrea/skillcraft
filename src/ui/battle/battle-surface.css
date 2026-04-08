@@ -61,7 +61,7 @@
   background: none;
   color: var(--bs-muted);
   font-family: var(--bs-mono);
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   font-weight: inherit;
   letter-spacing: 0.2em;
   cursor: pointer;
@@ -87,7 +87,7 @@
 }
 
 .battle-surface__overtime-countdown {
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -96,7 +96,7 @@
 }
 
 .battle-surface__match-kind {
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -107,7 +107,7 @@
 .battle-surface__title {
   margin: 0;
   justify-self: center;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   font-weight: 500;
   letter-spacing: 0.28em;
   text-transform: uppercase;
@@ -202,7 +202,7 @@
 .bs-actor__label {
   display: block;
   font-family: var(--bs-mono);
-  font-size: 0.6rem;
+  font-size: var(--text-caption);
   font-weight: 500;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -340,7 +340,7 @@
 
 .battle-log__toolbar-label {
   font-family: var(--bs-mono);
-  font-size: 0.38rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--bs-muted);
@@ -349,10 +349,11 @@
 
 .battle-log__mode {
   font-family: var(--bs-mono);
-  font-size: 0.36rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 0.12rem 0.35rem;
+  padding: 0.22rem 0.45rem;
+  min-height: 1.75rem;
   border: 1px solid var(--bs-line);
   border-radius: 2px;
   background: rgba(15, 23, 42, 0.45);
@@ -392,7 +393,7 @@
   gap: 0.18rem;
   min-width: 0;
   font-family: var(--bs-mono);
-  font-size: 0.34rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #94a3b8;
@@ -408,8 +409,8 @@
 
 .battle-log__filter-item input {
   margin: 0;
-  width: 0.5rem;
-  height: 0.5rem;
+  width: max(0.75rem, 14px);
+  height: max(0.75rem, 14px);
   accent-color: #fbbf24;
   cursor: pointer;
 }
@@ -461,7 +462,7 @@
 .battle-log__row {
   margin: 0 0 0.26rem;
   font-family: var(--bs-mono);
-  font-size: 0.42rem;
+  font-size: var(--text-micro);
   line-height: 1.38;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -561,7 +562,7 @@
 
 .bs-meter__k {
   font-family: var(--bs-mono);
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   color: var(--bs-muted);
 }
 
@@ -596,7 +597,7 @@
 
 .bs-meter__v {
   font-family: var(--bs-mono);
-  font-size: 0.58rem;
+  font-size: var(--text-micro);
   font-variant-numeric: tabular-nums;
   color: var(--bs-muted);
   letter-spacing: 0.04em;
@@ -621,7 +622,7 @@
 
 .bs-actions__label {
   font-family: var(--bs-mono);
-  font-size: 0.52rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--bs-muted);
@@ -637,7 +638,7 @@
   background: transparent;
   color: var(--bs-text);
   font-family: var(--bs-mono);
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.06em;
   text-align: left;
   cursor: pointer;
@@ -698,7 +699,7 @@
 
 .battle-surface__hint {
   margin: 0;
-  font-size: 0.62rem;
+  font-size: var(--text-caption);
   letter-spacing: 0.04em;
   line-height: 1.38;
   color: var(--bs-muted);
@@ -714,7 +715,7 @@
 .battle-surface__last {
   margin: 0;
   font-family: var(--bs-mono);
-  font-size: 0.55rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.04em;
   color: rgba(148, 163, 184, 0.75);
   white-space: nowrap;
@@ -728,7 +729,7 @@
   }
 
   .bs-btn {
-    font-size: 0.58rem;
+    font-size: var(--text-micro);
     padding: 0.28rem 0.3rem;
   }
 }
